@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Test Backend Connection</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 50px auto;
+            padding: 20px;
+        }
+        #log {
+            background: #f4f4f4;
+            padding: 20px;
+            margin-top: 20px;
+            border-radius: 5px;
+            white-space: pre-wrap;
+            font-family: monospace;
+            font-size: 12px;
+        }
+        button {
+            padding: 10px 20px;
+            font-size: 16px;
+            cursor: pointer;
+            background: #007bff;
+            color: white;
+            border: none;
+            border-radius: 5px;
+        }
+        button:hover {
+            background: #0056b3;
+        }
+    </style>
+</head>
+<body>
+    <h1>Backend Connection Test</h1>
+    <p>Click the button to test login to backend:</p>
+    <button onclick="testLogin()">Test Login</button>
+    <div id="log"></div>
+
+    <script>
+        function log(message, type = 'info') {
+            const logDiv = document.getElementById('log');
+            const timestamp = new Date().toLocaleTimeString();
+            const color = type === 'error' ? 'red' : type === 'success' ? 'green' : 'black';
+            logDiv.innerHTML += `<span style="color: ${color}">[${timestamp}] ${message}</span>\n`;
+        }
+
+        async function testLogin() {
+            const logDiv = document.getElementById('log');
+            logDiv.innerHTML = '';
+
+            log('Starting backend connection test...');
+            log('Backend URL: http://localhost:8000');
+            log('');
+
+            const credentials = {
+                email: 'admin@university.edu',
+                password: 'admin123'
+            };
+
+            log(`Testing with credentials: ${credentials.email}`);
+
+            try {
+                log('Sending POST request to /api/v1/auth/login...');
+
+                const response = await fetch('http://localhost:8000/api/v1/auth/login', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify(credentials)
+                });
+
+                log(`Response status: ${response.status} ${response.statusText}`);
+                log(`Response headers: ${JSON.stringify(Object.fromEntries(response.headers.entries()), null, 2)}`);
+
+                if (!response.ok) {
+                    const errorText = await response.text();
+                    log(`Error response body: ${errorText}`, 'error');
+                    log('Login failed!', 'error');
+                    return;
+                }
+
+                const data = await response.json();
+                log('Response data:', 'success');
+                log(JSON.stringify(data, null, 2), 'success');
+                log('Login successful!', 'success');
+                log(`User: ${data.user.first_name} ${data.user.last_name}`, 'success');
+                log(`Role: ${data.user.role}`, 'success');
+                log(`Token: ${data.access_token.substring(0, 50)}...`, 'success');
+
+            } catch (error) {
+                log(`Fetch error: ${error.message}`, 'error');
+                log(`Full error: ${JSON.stringify(error, null, 2)}`, 'error');
+                log('', 'error');
+                log('Possible issues:', 'error');
+                log('1. Backend server is not running on http://localhost:8000', 'error');
+                log('2. CORS is not properly configured', 'error');
+                log('3. Network connectivity issue', 'error');
+            }
+        }
+    </script>
+</body>
+</html>

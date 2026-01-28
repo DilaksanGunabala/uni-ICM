@@ -1,0 +1,21 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(mysql --version:*)",
+      "Bash(cmd /c setup_database.bat)",
+      "Bash(mysql:*)",
+      "Bash(curl:*)",
+      "Bash(uvicorn:*)",
+      "Bash(python -m json.tool:*)",
+      "Bash(pip install:*)",
+      "Bash(python:*)",
+      "Bash(timeout:*)",
+      "Bash(exit 0)",
+      "Bash(taskkill:*)",
+      "Bash(netstat:*)",
+      "Bash(findstr:*)",
+      "Bash(cmd)",
+      "Bash(tasklist:*)"
+    ]
+  }
+}
