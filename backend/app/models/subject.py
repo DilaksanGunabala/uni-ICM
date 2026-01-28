@@ -12,7 +12,10 @@ class Subject(Base):
     id = Column(Integer, primary_key=True, index=True, autoincrement=True)
     code = Column(String(20), unique=True, nullable=False, index=True)
     name = Column(String(255), nullable=False)
-    department_id = Column(Integer, ForeignKey("departments.id", ondelete="CASCADE"), nullable=False, index=True)
+    # department_id is nullable for general subjects (semester 1-3)
+    department_id = Column(Integer, ForeignKey("departments.id", ondelete="SET NULL"), nullable=True, index=True)
+    # Course coordinator (lecturer responsible for this subject)
+    coordinator_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
     semester = Column(Integer, nullable=False, index=True)
     credits = Column(Integer, nullable=False)
     is_active = Column(Boolean, default=True, index=True)
@@ -25,6 +28,7 @@ class Subject(Base):
 
     # Relationships
     department = relationship("Department", back_populates="subjects")
+    coordinator = relationship("User", foreign_keys=[coordinator_id], backref="coordinated_subjects")
     subject_assignments = relationship("SubjectAssignment", back_populates="subject", cascade="all, delete-orphan")
     enrollments = relationship("Enrollment", back_populates="subject", cascade="all, delete-orphan")
     assessments = relationship("Assessment", back_populates="subject", cascade="all, delete-orphan")

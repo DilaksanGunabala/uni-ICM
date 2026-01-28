@@ -41,7 +41,8 @@ def get_subjects(
     Accessible to all authenticated users.
     """
     query = db.query(Subject).options(
-        joinedload(Subject.department)
+        joinedload(Subject.department),
+        joinedload(Subject.coordinator)
     )
 
     # Apply filters
@@ -77,13 +78,15 @@ def get_subjects(
             code=subject.code,
             name=subject.name,
             department_id=subject.department_id,
+            coordinator_id=subject.coordinator_id,
             semester=subject.semester,
             credits=subject.credits,
             is_active=subject.is_active,
             created_at=subject.created_at,
             updated_at=subject.updated_at,
             department_name=subject.department.name if subject.department else None,
-            department_code=subject.department.code if subject.department else None
+            department_code=subject.department.code if subject.department else None,
+            coordinator_name=subject.coordinator.full_name if subject.coordinator else None
         )
         items.append(subject_data)
 
@@ -103,7 +106,8 @@ def get_subject(
     Accessible to all authenticated users.
     """
     subject = db.query(Subject).options(
-        joinedload(Subject.department)
+        joinedload(Subject.department),
+        joinedload(Subject.coordinator)
     ).filter(Subject.id == subject_id).first()
 
     if not subject:
@@ -117,13 +121,15 @@ def get_subject(
         code=subject.code,
         name=subject.name,
         department_id=subject.department_id,
+        coordinator_id=subject.coordinator_id,
         semester=subject.semester,
         credits=subject.credits,
         is_active=subject.is_active,
         created_at=subject.created_at,
         updated_at=subject.updated_at,
         department_name=subject.department.name if subject.department else None,
-        department_code=subject.department.code if subject.department else None
+        department_code=subject.department.code if subject.department else None,
+        coordinator_name=subject.coordinator.full_name if subject.coordinator else None
     )
 
 
@@ -146,21 +152,35 @@ def create_subject(
             detail=f"Subject code '{subject_data.code}' already exists"
         )
 
-    # Verify department exists
-    department = db.query(Department).filter(
-        Department.id == subject_data.department_id
-    ).first()
-    if not department:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Department not found"
-        )
+    # Verify department exists (only if department_id is provided)
+    # For general subjects (semester 1-3), department_id can be null
+    if subject_data.department_id is not None:
+        department = db.query(Department).filter(
+            Department.id == subject_data.department_id
+        ).first()
+        if not department:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Department not found"
+            )
+
+    # Verify coordinator exists (only if coordinator_id is provided)
+    if subject_data.coordinator_id is not None:
+        coordinator = db.query(User).filter(
+            User.id == subject_data.coordinator_id
+        ).first()
+        if not coordinator:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Coordinator not found"
+            )
 
     # Create subject
     new_subject = Subject(
         code=subject_data.code,
         name=subject_data.name,
         department_id=subject_data.department_id,
+        coordinator_id=subject_data.coordinator_id,
         semester=subject_data.semester,
         credits=subject_data.credits,
         is_active=subject_data.is_active
@@ -175,6 +195,7 @@ def create_subject(
         code=new_subject.code,
         name=new_subject.name,
         department_id=new_subject.department_id,
+        coordinator_id=new_subject.coordinator_id,
         semester=new_subject.semester,
         credits=new_subject.credits,
         is_active=new_subject.is_active,
@@ -220,16 +241,37 @@ def update_subject(
     if subject_data.name is not None:
         subject.name = subject_data.name
 
-    if subject_data.department_id is not None:
-        department = db.query(Department).filter(
-            Department.id == subject_data.department_id
-        ).first()
-        if not department:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Department not found"
-            )
+    # Handle department_id update
+    # For general subjects (semester 1-3), department_id can be null
+    # Check if department_id was explicitly included in the request
+    if 'department_id' in subject_data.model_fields_set:
+        if subject_data.department_id is not None:
+            # Verify department exists when a department ID is specified
+            department = db.query(Department).filter(
+                Department.id == subject_data.department_id
+            ).first()
+            if not department:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="Department not found"
+                )
+        # Update department_id (can be None for general subjects)
         subject.department_id = subject_data.department_id
+
+    # Handle coordinator_id update
+    if 'coordinator_id' in subject_data.model_fields_set:
+        if subject_data.coordinator_id is not None:
+            # Verify coordinator exists when a coordinator ID is specified
+            coordinator = db.query(User).filter(
+                User.id == subject_data.coordinator_id
+            ).first()
+            if not coordinator:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="Coordinator not found"
+                )
+        # Update coordinator_id (can be None)
+        subject.coordinator_id = subject_data.coordinator_id
 
     if subject_data.semester is not None:
         subject.semester = subject_data.semester
@@ -248,6 +290,7 @@ def update_subject(
         code=subject.code,
         name=subject.name,
         department_id=subject.department_id,
+        coordinator_id=subject.coordinator_id,
         semester=subject.semester,
         credits=subject.credits,
         is_active=subject.is_active,
@@ -457,7 +500,8 @@ def get_my_assigned_subjects(
     Requires: VIEW_OWN_SUBJECTS permission (Lecturer only)
     """
     query = db.query(Subject).join(SubjectAssignment).options(
-        joinedload(Subject.department)
+        joinedload(Subject.department),
+        joinedload(Subject.coordinator)
     ).filter(
         SubjectAssignment.lecturer_id == current_user.id
     )
@@ -474,13 +518,15 @@ def get_my_assigned_subjects(
             code=subject.code,
             name=subject.name,
             department_id=subject.department_id,
+            coordinator_id=subject.coordinator_id,
             semester=subject.semester,
             credits=subject.credits,
             is_active=subject.is_active,
             created_at=subject.created_at,
             updated_at=subject.updated_at,
             department_name=subject.department.name if subject.department else None,
-            department_code=subject.department.code if subject.department else None
+            department_code=subject.department.code if subject.department else None,
+            coordinator_name=subject.coordinator.full_name if subject.coordinator else None
         ))
 
     return results

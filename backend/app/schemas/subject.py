@@ -7,7 +7,10 @@ class SubjectBase(BaseModel):
     """Base subject schema"""
     code: str
     name: str
-    department_id: int
+    # department_id is optional for general subjects (semester 1-3)
+    department_id: Optional[int] = None
+    # Course coordinator (lecturer responsible for this subject)
+    coordinator_id: Optional[int] = None
     semester: int
     credits: int
 
@@ -22,6 +25,7 @@ class SubjectUpdate(BaseModel):
     code: Optional[str] = None
     name: Optional[str] = None
     department_id: Optional[int] = None
+    coordinator_id: Optional[int] = None
     semester: Optional[int] = None
     credits: Optional[int] = None
     is_active: Optional[bool] = None
@@ -32,7 +36,10 @@ class SubjectResponse(BaseModel):
     id: int
     code: str
     name: str
-    department_id: int
+    # department_id can be null for general subjects
+    department_id: Optional[int] = None
+    # Course coordinator
+    coordinator_id: Optional[int] = None
     semester: int
     credits: int
     is_active: bool
@@ -44,9 +51,10 @@ class SubjectResponse(BaseModel):
 
 
 class SubjectWithDetails(SubjectResponse):
-    """Schema for subject response with department details"""
+    """Schema for subject response with department and coordinator details"""
     department_name: Optional[str] = None
     department_code: Optional[str] = None
+    coordinator_name: Optional[str] = None
 
     class Config:
         from_attributes = True

@@ -39,16 +39,17 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
-import api, { BackendSubject, BackendDepartment } from "@/lib/api";
+import api, { BackendSubject, BackendDepartment, BackendUser } from "@/lib/api";
 
 interface SubjectData {
   id: string;
   code: string;
   name: string;
-  departmentId: number;
+  departmentId: number | null;  // null for general subjects (semester 1-3)
   departmentName: string;
+  coordinatorId: number | null;
+  coordinatorName: string;
   semester: number;
-  academicYear: string;
   credits: number;
   isActive: boolean;
 }
@@ -60,6 +61,7 @@ export function SubjectsPage() {
   const [subjects, setSubjects] = useState<SubjectData[]>([]);
   const [filteredSubjects, setFilteredSubjects] = useState<SubjectData[]>([]);
   const [departments, setDepartments] = useState<BackendDepartment[]>([]);
+  const [lecturers, setLecturers] = useState<BackendUser[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -79,10 +81,29 @@ export function SubjectsPage() {
     code: "",
     name: "",
     department_id: "",
+    coordinator_id: "",
     semester: "1",
-    academic_year: "2024-2025",
     credits: "3",
+    subject_type: "general" as "general" | "specialized",
   });
+
+  // Helper function to determine if semester is general (1-3) or specialized (4-8)
+  const isGeneralSemester = (semester: string | number) => {
+    const sem = typeof semester === 'string' ? parseInt(semester) : semester;
+    return sem >= 1 && sem <= 3;
+  };
+
+  // Auto-update subject type when semester changes
+  const handleSemesterChange = (semester: string) => {
+    const isGeneral = isGeneralSemester(semester);
+    setFormData({
+      ...formData,
+      semester,
+      subject_type: isGeneral ? "general" : "specialized",
+      // Clear department if switching to general
+      department_id: isGeneral ? "" : formData.department_id,
+    });
+  };
 
   const fetchSubjects = async (showRefreshing = false) => {
     try {
@@ -92,21 +113,24 @@ export function SubjectsPage() {
         setLoading(true);
       }
 
-      const [subjectsResponse, deptResponse] = await Promise.all([
+      const [subjectsResponse, deptResponse, lecturersResponse] = await Promise.all([
         api.getSubjects({ page_size: 100 }),
         api.getDepartments({ page_size: 100 }),
+        api.getUsers({ role: 'LECTURER', page_size: 100 }),
       ]);
 
       setDepartments(deptResponse.items);
+      setLecturers(lecturersResponse.items);
 
       const mappedSubjects: SubjectData[] = subjectsResponse.items.map((s: BackendSubject) => ({
         id: s.id.toString(),
         code: s.code,
         name: s.name,
         departmentId: s.department_id,
-        departmentName: s.department_name || "N/A",
+        departmentName: s.department_id ? (s.department_name || "N/A") : "General",
+        coordinatorId: s.coordinator_id,
+        coordinatorName: s.coordinator_name || "Not Assigned",
         semester: s.semester,
-        academicYear: s.academic_year,
         credits: s.credits,
         isActive: s.is_active,
       }));
@@ -141,7 +165,11 @@ export function SubjectsPage() {
 
     // Department filter
     if (departmentFilter !== "all") {
-      filtered = filtered.filter(s => s.departmentId.toString() === departmentFilter);
+      if (departmentFilter === "general") {
+        filtered = filtered.filter(s => s.departmentId === null);
+      } else {
+        filtered = filtered.filter(s => s.departmentId?.toString() === departmentFilter);
+      }
     }
 
     // Semester filter
@@ -169,12 +197,15 @@ export function SubjectsPage() {
     try {
       setSaving(true);
 
+      // For general subjects (sem 1-3), department_id can be null/undefined
+      const isGeneral = isGeneralSemester(formData.semester);
+
       await api.createSubject({
         code: formData.code,
         name: formData.name,
-        department_id: parseInt(formData.department_id),
+        department_id: isGeneral && !formData.department_id ? null : parseInt(formData.department_id),
+        coordinator_id: formData.coordinator_id ? parseInt(formData.coordinator_id) : null,
         semester: parseInt(formData.semester),
-        academic_year: formData.academic_year,
         credits: parseInt(formData.credits),
         is_active: true,
       });
@@ -204,12 +235,15 @@ export function SubjectsPage() {
     try {
       setSaving(true);
 
+      // For general subjects (sem 1-3), department_id can be null/undefined
+      const isGeneral = isGeneralSemester(formData.semester);
+
       await api.updateSubject(parseInt(selectedSubject.id), {
         code: formData.code,
         name: formData.name,
-        department_id: parseInt(formData.department_id),
+        department_id: isGeneral && !formData.department_id ? null : parseInt(formData.department_id),
+        coordinator_id: formData.coordinator_id ? parseInt(formData.coordinator_id) : null,
         semester: parseInt(formData.semester),
-        academic_year: formData.academic_year,
         credits: parseInt(formData.credits),
       });
 
@@ -263,9 +297,10 @@ export function SubjectsPage() {
       code: "",
       name: "",
       department_id: "",
+      coordinator_id: "",
       semester: "1",
-      academic_year: "2024-2025",
       credits: "3",
+      subject_type: "general",
     });
     setSelectedSubject(null);
   };
@@ -275,10 +310,11 @@ export function SubjectsPage() {
     setFormData({
       code: subject.code,
       name: subject.name,
-      department_id: subject.departmentId.toString(),
+      department_id: subject.departmentId ? subject.departmentId.toString() : "",
+      coordinator_id: subject.coordinatorId ? subject.coordinatorId.toString() : "",
       semester: subject.semester.toString(),
-      academic_year: subject.academicYear,
       credits: subject.credits.toString(),
+      subject_type: isGeneralSemester(subject.semester) ? "general" : "specialized",
     });
     setIsEditDialogOpen(true);
   };
@@ -316,23 +352,52 @@ export function SubjectsPage() {
     },
     {
       key: "departmentName",
-      header: "Department",
-      cell: (row) => <span className="text-sm">{row.departmentName}</span>,
+      header: "Department / Type",
+      cell: (row) => {
+        const isGeneral = isGeneralSemester(row.semester);
+        return (
+          <div className="flex items-center gap-2">
+            {isGeneral ? (
+              <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400">
+                General
+              </span>
+            ) : (
+              <span className="text-sm">{row.departmentName || "N/A"}</span>
+            )}
+          </div>
+        );
+      },
     },
     {
       key: "semester",
       header: "Semester",
-      cell: (row) => (
-        <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-primary/10 text-primary">
-          Sem {row.semester}
-        </span>
-      ),
+      cell: (row) => {
+        const isGeneral = isGeneralSemester(row.semester);
+        return (
+          <div className="flex flex-col gap-1">
+            <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${
+              isGeneral
+                ? "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400"
+                : "bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400"
+            }`}>
+              Sem {row.semester}
+            </span>
+            <span className="text-[10px] text-muted-foreground">
+              {isGeneral ? "General" : "Specialized"}
+            </span>
+          </div>
+        );
+      },
       sortable: true,
     },
     {
-      key: "academicYear",
-      header: "Academic Year",
-      cell: (row) => <span className="text-sm text-muted-foreground">{row.academicYear}</span>,
+      key: "coordinatorName",
+      header: "Course Coordinator",
+      cell: (row) => (
+        <span className={`text-sm ${row.coordinatorId ? "" : "text-muted-foreground italic"}`}>
+          {row.coordinatorName}
+        </span>
+      ),
     },
     {
       key: "status",
@@ -461,6 +526,7 @@ export function SubjectsPage() {
           </SelectTrigger>
           <SelectContent className="bg-popover">
             <SelectItem value="all">All Departments</SelectItem>
+            <SelectItem value="general">General (Sem 1-3)</SelectItem>
             {departments.map((dept) => (
               <SelectItem key={dept.id} value={dept.id.toString()}>
                 {dept.name}
@@ -546,10 +612,48 @@ export function SubjectsPage() {
                 placeholder="Introduction to Computer Science"
               />
             </div>
-            <div className="grid grid-cols-2 gap-4">
+            <div className="space-y-2">
+              <Label htmlFor="semester">Semester *</Label>
+              <Select value={formData.semester} onValueChange={handleSemesterChange}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Select semester" />
+                </SelectTrigger>
+                <SelectContent className="bg-popover">
+                  <SelectItem value="1">Semester 1 (General)</SelectItem>
+                  <SelectItem value="2">Semester 2 (General)</SelectItem>
+                  <SelectItem value="3">Semester 3 (General)</SelectItem>
+                  <SelectItem value="4">Semester 4 (Specialized)</SelectItem>
+                  <SelectItem value="5">Semester 5 (Specialized)</SelectItem>
+                  <SelectItem value="6">Semester 6 (Specialized)</SelectItem>
+                  <SelectItem value="7">Semester 7 (Specialized)</SelectItem>
+                  <SelectItem value="8">Semester 8 (Specialized)</SelectItem>
+                </SelectContent>
+              </Select>
+              {/* Subject Type Badge */}
+              <div className="flex items-center gap-2 mt-2">
+                <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${
+                  isGeneralSemester(formData.semester)
+                    ? "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400"
+                    : "bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400"
+                }`}>
+                  {isGeneralSemester(formData.semester) ? "General Subject" : "Specialized Subject"}
+                </span>
+                <span className="text-xs text-muted-foreground">
+                  {isGeneralSemester(formData.semester)
+                    ? "Available to all departments"
+                    : "Department specific"}
+                </span>
+              </div>
+            </div>
+
+            {/* Department - only shown for specialized subjects (sem 4-8) */}
+            {!isGeneralSemester(formData.semester) && (
               <div className="space-y-2">
                 <Label htmlFor="department">Department *</Label>
-                <Select value={formData.department_id} onValueChange={(value) => setFormData({ ...formData, department_id: value })}>
+                <Select
+                  value={formData.department_id}
+                  onValueChange={(value) => setFormData({ ...formData, department_id: value })}
+                >
                   <SelectTrigger>
                     <SelectValue placeholder="Select department" />
                   </SelectTrigger>
@@ -562,37 +666,42 @@ export function SubjectsPage() {
                   </SelectContent>
                 </Select>
               </div>
-              <div className="space-y-2">
-                <Label htmlFor="semester">Semester *</Label>
-                <Select value={formData.semester} onValueChange={(value) => setFormData({ ...formData, semester: value })}>
-                  <SelectTrigger>
-                    <SelectValue placeholder="Select semester" />
-                  </SelectTrigger>
-                  <SelectContent className="bg-popover">
-                    {[1, 2, 3, 4, 5, 6, 7, 8].map((sem) => (
-                      <SelectItem key={sem} value={sem.toString()}>
-                        Semester {sem}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-            </div>
+            )}
+
+            {/* Course Coordinator */}
             <div className="space-y-2">
-              <Label htmlFor="academic_year">Academic Year</Label>
-              <Input
-                id="academic_year"
-                value={formData.academic_year}
-                onChange={(e) => setFormData({ ...formData, academic_year: e.target.value })}
-                placeholder="2024-2025"
-              />
+              <Label htmlFor="coordinator">Course Coordinator</Label>
+              <Select
+                value={formData.coordinator_id || "none"}
+                onValueChange={(value) => setFormData({ ...formData, coordinator_id: value === "none" ? "" : value })}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Select coordinator (optional)" />
+                </SelectTrigger>
+                <SelectContent className="bg-popover">
+                  <SelectItem value="none">No Coordinator</SelectItem>
+                  {lecturers.map((lecturer) => (
+                    <SelectItem key={lecturer.id} value={lecturer.id.toString()}>
+                      {lecturer.first_name} {lecturer.last_name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => { setIsCreateDialogOpen(false); resetForm(); }} disabled={saving}>
               Cancel
             </Button>
-            <Button onClick={handleCreate} disabled={saving || !formData.code || !formData.name || !formData.department_id}>
+            <Button
+              onClick={handleCreate}
+              disabled={
+                saving ||
+                !formData.code ||
+                !formData.name ||
+                (!isGeneralSemester(formData.semester) && !formData.department_id)
+              }
+            >
               {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
               Create Subject
             </Button>
@@ -643,10 +752,48 @@ export function SubjectsPage() {
                 onChange={(e) => setFormData({ ...formData, name: e.target.value })}
               />
             </div>
-            <div className="grid grid-cols-2 gap-4">
+            <div className="space-y-2">
+              <Label htmlFor="edit_semester">Semester</Label>
+              <Select value={formData.semester} onValueChange={handleSemesterChange}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Select semester" />
+                </SelectTrigger>
+                <SelectContent className="bg-popover">
+                  <SelectItem value="1">Semester 1 (General)</SelectItem>
+                  <SelectItem value="2">Semester 2 (General)</SelectItem>
+                  <SelectItem value="3">Semester 3 (General)</SelectItem>
+                  <SelectItem value="4">Semester 4 (Specialized)</SelectItem>
+                  <SelectItem value="5">Semester 5 (Specialized)</SelectItem>
+                  <SelectItem value="6">Semester 6 (Specialized)</SelectItem>
+                  <SelectItem value="7">Semester 7 (Specialized)</SelectItem>
+                  <SelectItem value="8">Semester 8 (Specialized)</SelectItem>
+                </SelectContent>
+              </Select>
+              {/* Subject Type Badge */}
+              <div className="flex items-center gap-2 mt-2">
+                <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${
+                  isGeneralSemester(formData.semester)
+                    ? "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400"
+                    : "bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400"
+                }`}>
+                  {isGeneralSemester(formData.semester) ? "General Subject" : "Specialized Subject"}
+                </span>
+                <span className="text-xs text-muted-foreground">
+                  {isGeneralSemester(formData.semester)
+                    ? "Available to all departments"
+                    : "Department specific"}
+                </span>
+              </div>
+            </div>
+
+            {/* Department - only shown for specialized subjects (sem 4-8) */}
+            {!isGeneralSemester(formData.semester) && (
               <div className="space-y-2">
-                <Label htmlFor="edit_department">Department</Label>
-                <Select value={formData.department_id} onValueChange={(value) => setFormData({ ...formData, department_id: value })}>
+                <Label htmlFor="edit_department">Department *</Label>
+                <Select
+                  value={formData.department_id}
+                  onValueChange={(value) => setFormData({ ...formData, department_id: value })}
+                >
                   <SelectTrigger>
                     <SelectValue placeholder="Select department" />
                   </SelectTrigger>
@@ -659,36 +806,42 @@ export function SubjectsPage() {
                   </SelectContent>
                 </Select>
               </div>
-              <div className="space-y-2">
-                <Label htmlFor="edit_semester">Semester</Label>
-                <Select value={formData.semester} onValueChange={(value) => setFormData({ ...formData, semester: value })}>
-                  <SelectTrigger>
-                    <SelectValue placeholder="Select semester" />
-                  </SelectTrigger>
-                  <SelectContent className="bg-popover">
-                    {[1, 2, 3, 4, 5, 6, 7, 8].map((sem) => (
-                      <SelectItem key={sem} value={sem.toString()}>
-                        Semester {sem}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-            </div>
+            )}
+
+            {/* Course Coordinator */}
             <div className="space-y-2">
-              <Label htmlFor="edit_academic_year">Academic Year</Label>
-              <Input
-                id="edit_academic_year"
-                value={formData.academic_year}
-                onChange={(e) => setFormData({ ...formData, academic_year: e.target.value })}
-              />
+              <Label htmlFor="edit_coordinator">Course Coordinator</Label>
+              <Select
+                value={formData.coordinator_id || "none"}
+                onValueChange={(value) => setFormData({ ...formData, coordinator_id: value === "none" ? "" : value })}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Select coordinator (optional)" />
+                </SelectTrigger>
+                <SelectContent className="bg-popover">
+                  <SelectItem value="none">No Coordinator</SelectItem>
+                  {lecturers.map((lecturer) => (
+                    <SelectItem key={lecturer.id} value={lecturer.id.toString()}>
+                      {lecturer.first_name} {lecturer.last_name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => { setIsEditDialogOpen(false); resetForm(); }} disabled={saving}>
               Cancel
             </Button>
-            <Button onClick={handleEdit} disabled={saving}>
+            <Button
+              onClick={handleEdit}
+              disabled={
+                saving ||
+                !formData.code ||
+                !formData.name ||
+                (!isGeneralSemester(formData.semester) && !formData.department_id)
+              }
+            >
               {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
               Save Changes
             </Button>
