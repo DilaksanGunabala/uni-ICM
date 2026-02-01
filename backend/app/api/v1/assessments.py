@@ -46,8 +46,8 @@ def get_assessments(
     if assessment_type is not None:
         query = query.filter(Assessment.assessment_type == assessment_type)
 
-    # Order by subject_id and due_date
-    query = query.order_by(Assessment.subject_id, Assessment.due_date)
+    # Order by subject_id and assessment_date
+    query = query.order_by(Assessment.subject_id, Assessment.assessment_date)
 
     # Paginate
     paginated = paginate(query, page, page_size)
@@ -130,7 +130,9 @@ def create_assessment(
         assessment_type=assessment_data.assessment_type,
         max_marks=assessment_data.max_marks,
         weightage=assessment_data.weightage,
-        due_date=assessment_data.due_date
+        assessment_date=assessment_data.assessment_date,
+        academic_year=assessment_data.academic_year,
+        description=assessment_data.description
     )
 
     db.add(new_assessment)
@@ -144,7 +146,10 @@ def create_assessment(
         assessment_type=new_assessment.assessment_type,
         max_marks=new_assessment.max_marks,
         weightage=new_assessment.weightage,
-        due_date=new_assessment.due_date,
+        assessment_date=new_assessment.assessment_date,
+        academic_year=new_assessment.academic_year,
+        description=new_assessment.description,
+        is_active=new_assessment.is_active,
         created_at=new_assessment.created_at,
         updated_at=new_assessment.updated_at
     )
@@ -200,8 +205,14 @@ def update_assessment(
     if assessment_data.weightage is not None:
         assessment.weightage = assessment_data.weightage
 
-    if assessment_data.due_date is not None:
-        assessment.due_date = assessment_data.due_date
+    if assessment_data.assessment_date is not None:
+        assessment.assessment_date = assessment_data.assessment_date
+
+    if assessment_data.description is not None:
+        assessment.description = assessment_data.description
+
+    if assessment_data.is_active is not None:
+        assessment.is_active = assessment_data.is_active
 
     db.commit()
     db.refresh(assessment)
@@ -213,7 +224,10 @@ def update_assessment(
         assessment_type=assessment.assessment_type,
         max_marks=assessment.max_marks,
         weightage=assessment.weightage,
-        due_date=assessment.due_date,
+        assessment_date=assessment.assessment_date,
+        academic_year=assessment.academic_year,
+        description=assessment.description,
+        is_active=assessment.is_active,
         created_at=assessment.created_at,
         updated_at=assessment.updated_at
     )
@@ -290,7 +304,7 @@ def get_assessments_by_subject(
         joinedload(Assessment.subject).joinedload(Subject.department)
     ).filter(
         Assessment.subject_id == subject_id
-    ).order_by(Assessment.due_date).all()
+    ).order_by(Assessment.assessment_date).all()
 
     results = []
     for assessment in assessments:
@@ -326,7 +340,7 @@ def get_my_assessments(
         joinedload(Assessment.subject).joinedload(Subject.department)
     ).filter(
         Assessment.subject_id.in_(subject_ids)
-    ).order_by(Assessment.subject_id, Assessment.due_date).all()
+    ).order_by(Assessment.subject_id, Assessment.assessment_date).all()
 
     results = []
     for assessment in assessments:
@@ -348,7 +362,10 @@ def _build_assessment_with_details(assessment: Assessment) -> AssessmentWithDeta
         assessment_type=assessment.assessment_type,
         max_marks=assessment.max_marks,
         weightage=assessment.weightage,
-        due_date=assessment.due_date,
+        assessment_date=assessment.assessment_date,
+        academic_year=assessment.academic_year,
+        description=assessment.description,
+        is_active=assessment.is_active,
         created_at=assessment.created_at,
         updated_at=assessment.updated_at,
         subject_code=assessment.subject.code if assessment.subject else None,

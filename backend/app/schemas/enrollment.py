@@ -9,6 +9,7 @@ class EnrollmentBase(BaseModel):
     student_id: int
     subject_id: int
     academic_year: str
+    semester: int
 
 
 class EnrollmentCreate(EnrollmentBase):
@@ -30,6 +31,7 @@ class EnrollmentResponse(BaseModel):
     student_id: int
     subject_id: int
     academic_year: str
+    semester: int
     enrollment_date: date
     status: EnrollmentStatus
     created_at: datetime

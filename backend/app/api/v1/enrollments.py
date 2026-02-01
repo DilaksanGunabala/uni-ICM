@@ -8,7 +8,8 @@ from app.middleware.auth import get_current_user
 from app.middleware.rbac import require_permission
 from app.models.user import User
 from app.models.subject import Subject
-from app.models.enrollment import Enrollment, EnrollmentStatus
+from app.models.enrollment import Enrollment
+from app.core.constants import EnrollmentStatus
 from app.schemas.enrollment import (
     EnrollmentCreate,
     EnrollmentUpdate,
@@ -146,6 +147,7 @@ def create_enrollment(
         student_id=enrollment_data.student_id,
         subject_id=enrollment_data.subject_id,
         academic_year=enrollment_data.academic_year,
+        semester=enrollment_data.semester,
         enrollment_date=enrollment_data.enrollment_date or date.today(),
         status=enrollment_data.status or EnrollmentStatus.ACTIVE
     )
@@ -159,6 +161,7 @@ def create_enrollment(
         student_id=new_enrollment.student_id,
         subject_id=new_enrollment.subject_id,
         academic_year=new_enrollment.academic_year,
+        semester=new_enrollment.semester,
         enrollment_date=new_enrollment.enrollment_date,
         status=new_enrollment.status,
         created_at=new_enrollment.created_at,
@@ -217,6 +220,7 @@ def update_enrollment(
         student_id=enrollment.student_id,
         subject_id=enrollment.subject_id,
         academic_year=enrollment.academic_year,
+        semester=enrollment.semester,
         enrollment_date=enrollment.enrollment_date,
         status=enrollment.status,
         created_at=enrollment.created_at,
@@ -356,6 +360,7 @@ def bulk_enroll_students(
                 student_id=enrollment_data.student_id,
                 subject_id=enrollment_data.subject_id,
                 academic_year=enrollment_data.academic_year,
+                semester=enrollment_data.semester,
                 enrollment_date=enrollment_data.enrollment_date or date.today(),
                 status=enrollment_data.status or EnrollmentStatus.ACTIVE
             )
@@ -364,7 +369,8 @@ def bulk_enroll_students(
             created.append({
                 "student_id": enrollment_data.student_id,
                 "subject_id": enrollment_data.subject_id,
-                "academic_year": enrollment_data.academic_year
+                "academic_year": enrollment_data.academic_year,
+                "semester": enrollment_data.semester
             })
 
         except Exception as e:
@@ -386,6 +392,64 @@ def bulk_enroll_students(
 
 
 # ============================================================================
+# BATCHES FOR SUBJECT
+# ============================================================================
+
+@router.get("/batches/{subject_id}", response_model=List[str])
+def get_batches_for_subject(
+    subject_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Get unique batches (e.g., E20, E21, E22) for a specific subject.
+
+    Extracts batch prefix from student_id field (e.g., "E/20/123" -> "E20").
+    Returns sorted list of unique batch identifiers.
+    """
+    import re
+
+    # Verify subject exists
+    subject = db.query(Subject).filter(Subject.id == subject_id).first()
+    if not subject:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Subject not found"
+        )
+
+    # Get all enrollments for this subject with student info
+    enrollments = db.query(Enrollment).options(
+        joinedload(Enrollment.student)
+    ).filter(
+        Enrollment.subject_id == subject_id,
+        Enrollment.status == EnrollmentStatus.ACTIVE
+    ).all()
+
+    # Extract unique batches from student_id
+    batches = set()
+    for enrollment in enrollments:
+        if enrollment.student and enrollment.student.student_id:
+            student_id = enrollment.student.student_id
+            # Try to extract batch pattern like "E/20/123" -> "E20" or "E20/123" -> "E20"
+            # Common formats: E/20/123, E20/123, E.20.123, E-20-123
+            match = re.match(r'([A-Z]+)[/.\-]?(\d{2})[/.\-]?\d*', student_id, re.IGNORECASE)
+            if match:
+                prefix = match.group(1).upper()
+                year = match.group(2)
+                batches.add(f"{prefix}{year}")
+            else:
+                # If no pattern matched, try to extract first part before any number
+                match2 = re.match(r'([A-Z]+\d{2})', student_id, re.IGNORECASE)
+                if match2:
+                    batches.add(match2.group(1).upper())
+
+    # Sort batches (most recent first - higher numbers first)
+    sorted_batches = sorted(batches, reverse=True)
+
+    return sorted_batches
+
+
+# ============================================================================
 # HELPER FUNCTIONS
 # ============================================================================
 
@@ -396,6 +460,7 @@ def _build_enrollment_with_details(enrollment: Enrollment) -> EnrollmentWithDeta
         student_id=enrollment.student_id,
         subject_id=enrollment.subject_id,
         academic_year=enrollment.academic_year,
+        semester=enrollment.semester,
         enrollment_date=enrollment.enrollment_date,
         status=enrollment.status,
         created_at=enrollment.created_at,

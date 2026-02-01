@@ -88,8 +88,8 @@ def get_marks(
 
     if role_name == "STUDENT":
         # Students see only their own approved marks
-        query = query.join(Enrollment).filter(
-            Enrollment.student_id == current_user.id,
+        query = query.filter(
+            Mark.enrollment.has(Enrollment.student_id == current_user.id),
             Mark.status == MarkStatus.APPROVED
         )
     elif role_name == "LECTURER":
@@ -97,25 +97,26 @@ def get_marks(
         query = query.filter(Mark.submitted_by == current_user.id)
     elif role_name == "HOD":
         # HOD sees all marks in their department
-        query = query.join(Enrollment).join(Subject).filter(
-            Subject.department_id == current_user.department_id
+        query = query.filter(
+            Mark.enrollment.has(
+                Enrollment.subject.has(Subject.department_id == current_user.department_id)
+            )
         )
     # SUPER_ADMIN sees all marks (no additional filter)
 
-    # Apply additional filters
+    # Apply additional filters using .has() to avoid multiple joins
     if student_id:
-        query = query.join(Enrollment).filter(Enrollment.student_id == student_id)
+        query = query.filter(Mark.enrollment.has(Enrollment.student_id == student_id))
     if subject_id:
-        if not query.join(Assessment, isouter=True).filter(Assessment.subject_id == subject_id):
-            query = query.join(Assessment).filter(Assessment.subject_id == subject_id)
+        query = query.filter(Mark.assessment.has(Assessment.subject_id == subject_id))
     if semester:
-        query = query.join(Enrollment, isouter=True).filter(Enrollment.semester == semester)
+        query = query.filter(Mark.enrollment.has(Enrollment.semester == semester))
     if assessment_type:
-        query = query.join(Assessment, isouter=True).filter(Assessment.assessment_type == assessment_type)
+        query = query.filter(Mark.assessment.has(Assessment.assessment_type == assessment_type))
     if status_filter:
         query = query.filter(Mark.status == status_filter)
     if academic_year:
-        query = query.join(Enrollment, isouter=True).filter(Enrollment.academic_year == academic_year)
+        query = query.filter(Mark.enrollment.has(Enrollment.academic_year == academic_year))
 
     # Order by most recent first
     query = query.order_by(Mark.submitted_at.desc())
@@ -332,6 +333,7 @@ def _build_mark_response(db: Session, mark: Mark) -> MarkResponse:
         assessment_name=assessment.name,
         assessment_type=assessment.assessment_type.value,
         max_marks=assessment.max_marks,
+        semester=enrollment.semester,
         submitted_by_name=submitter.full_name,
         reviewed_by_name=reviewer.full_name if reviewer else None
     )

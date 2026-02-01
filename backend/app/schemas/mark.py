@@ -54,6 +54,7 @@ class MarkResponse(MarkInDB):
     assessment_name: Optional[str] = None
     assessment_type: Optional[str] = None
     max_marks: Optional[Decimal] = None
+    semester: Optional[int] = None
     submitted_by_name: Optional[str] = None
     reviewed_by_name: Optional[str] = None
 
