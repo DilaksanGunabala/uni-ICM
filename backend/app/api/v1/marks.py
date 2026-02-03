@@ -60,6 +60,7 @@ def get_marks(
     assessment_type: Optional[str] = None,
     status_filter: Optional[MarkStatus] = QueryParam(None, alias="status"),
     academic_year: Optional[str] = None,
+    batch: Optional[str] = None,
     page: int = QueryParam(1, ge=1),
     page_size: int = QueryParam(20, ge=1, le=100),
     db: Session = Depends(get_db),
@@ -73,6 +74,9 @@ def get_marks(
     - HOD: See all marks in their department
     - LECTURER: See marks they submitted
     - STUDENT: See only their own approved marks
+
+    Parameters:
+    - batch: Filter by student batch (e.g., "E20", "E21"). Matches student_id patterns like "E/20/xxx".
     """
     # Start with base query
     query = db.query(Mark).options(
@@ -117,6 +121,20 @@ def get_marks(
         query = query.filter(Mark.status == status_filter)
     if academic_year:
         query = query.filter(Mark.enrollment.has(Enrollment.academic_year == academic_year))
+
+    # Filter by batch (e.g., "E20" matches student_id patterns like "E/20/xxx", "E20/xxx", "E.20.xxx")
+    if batch:
+        import re
+        match = re.match(r'([A-Z]+)(\d{2})', batch, re.IGNORECASE)
+        if match:
+            prefix = match.group(1).upper()
+            year = match.group(2)
+            batch_pattern = f"{prefix}%{year}%"
+            query = query.filter(
+                Mark.enrollment.has(
+                    Enrollment.student.has(User.student_id.ilike(batch_pattern))
+                )
+            )
 
     # Order by most recent first
     query = query.order_by(Mark.submitted_at.desc())

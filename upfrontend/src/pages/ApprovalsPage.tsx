@@ -15,7 +15,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Check, X, Eye, Clock, Loader2 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
-import api, { BackendMark } from "@/lib/api";
+import api, { BackendMark, getApiErrorMessage } from "@/lib/api";
 
 interface MarkData {
   id: string;
@@ -100,10 +100,10 @@ export function ApprovalsPage() {
       setIsApproveDialogOpen(false);
       setSelectedMark(null);
       fetchPendingMarks();
-    } catch (error: any) {
+    } catch (error: unknown) {
       toast({
         title: "Error",
-        description: error.response?.data?.detail || "Failed to approve marks.",
+        description: getApiErrorMessage(error, "Failed to approve marks."),
         variant: "destructive",
       });
     } finally {
@@ -128,10 +128,10 @@ export function ApprovalsPage() {
       setSelectedMark(null);
       setRejectReason("");
       fetchPendingMarks();
-    } catch (error: any) {
+    } catch (error: unknown) {
       toast({
         title: "Error",
-        description: error.response?.data?.detail || "Failed to reject marks.",
+        description: getApiErrorMessage(error, "Failed to reject marks."),
         variant: "destructive",
       });
     } finally {

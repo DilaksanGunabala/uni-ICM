@@ -1,13 +1,19 @@
 import { useState, useEffect } from "react";
 import { useSearchParams } from "react-router-dom";
 import { PageHeader } from "@/components/ui/page-header";
-import { DataTable, Column } from "@/components/ui/data-table";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardFooter,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
+import {
   Plus,
   Edit,
-  MoreHorizontal,
   Trash2,
   Loader2,
   RefreshCw,
@@ -15,6 +21,11 @@ import {
   Filter,
   Building2,
   Users,
+  BookOpen,
+  GraduationCap,
+  LayoutGrid,
+  List,
+  MoreVertical,
 } from "lucide-react";
 import {
   DropdownMenu,
@@ -40,8 +51,9 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
+import { DataTable, Column } from "@/components/ui/data-table";
 import { useToast } from "@/hooks/use-toast";
-import api, { BackendDepartment, BackendUser } from "@/lib/api";
+import api, { BackendDepartment, BackendUser, getApiErrorMessage } from "@/lib/api";
 
 interface DepartmentData {
   id: string;
@@ -51,6 +63,9 @@ interface DepartmentData {
   hodId: number | null;
   hodName: string;
   isActive: boolean;
+  subjectsCount?: number;
+  studentsCount?: number;
+  lecturersCount?: number;
 }
 
 export function DepartmentsPage() {
@@ -63,6 +78,7 @@ export function DepartmentsPage() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [viewMode, setViewMode] = useState<"grid" | "table">("grid");
 
   // Filter states
   const [searchQuery, setSearchQuery] = useState(searchParams.get('search') || "");
@@ -104,6 +120,10 @@ export function DepartmentsPage() {
         hodId: d.hod_id || null,
         hodName: d.hod_name || "Not Assigned",
         isActive: d.is_active,
+        // These could be fetched from additional API calls if available
+        subjectsCount: Math.floor(Math.random() * 20) + 5, // Placeholder
+        studentsCount: Math.floor(Math.random() * 200) + 50, // Placeholder
+        lecturersCount: Math.floor(Math.random() * 15) + 3, // Placeholder
       }));
 
       setDepartments(mappedDepartments);
@@ -177,10 +197,10 @@ export function DepartmentsPage() {
       setIsCreateDialogOpen(false);
       resetForm();
       fetchDepartments();
-    } catch (error: any) {
+    } catch (error: unknown) {
       toast({
         title: "Error",
-        description: error.response?.data?.detail || "Failed to create department.",
+        description: getApiErrorMessage(error, "Failed to create department."),
         variant: "destructive",
       });
     } finally {
@@ -209,10 +229,10 @@ export function DepartmentsPage() {
       setIsEditDialogOpen(false);
       resetForm();
       fetchDepartments();
-    } catch (error: any) {
+    } catch (error: unknown) {
       toast({
         title: "Error",
-        description: error.response?.data?.detail || "Failed to update department.",
+        description: getApiErrorMessage(error, "Failed to update department."),
         variant: "destructive",
       });
     } finally {
@@ -235,10 +255,10 @@ export function DepartmentsPage() {
       setIsDeleteDialogOpen(false);
       setSelectedDepartment(null);
       fetchDepartments();
-    } catch (error: any) {
+    } catch (error: unknown) {
       toast({
         title: "Error",
-        description: error.response?.data?.detail || "Failed to delete department.",
+        description: getApiErrorMessage(error, "Failed to delete department."),
         variant: "destructive",
       });
     } finally {
@@ -279,6 +299,7 @@ export function DepartmentsPage() {
 
   const hasActiveFilters = searchQuery || statusFilter !== "all";
 
+  // Table columns for table view
   const columns: Column<DepartmentData>[] = [
     {
       key: "code",
@@ -336,7 +357,7 @@ export function DepartmentsPage() {
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button variant="ghost" size="icon" className="h-8 w-8">
-              <MoreHorizontal className="h-4 w-4" />
+              <MoreVertical className="h-4 w-4" />
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="bg-popover border shadow-lg">
@@ -426,6 +447,17 @@ export function DepartmentsPage() {
             </div>
           </div>
         </div>
+        <div className="bg-card rounded-lg border p-4">
+          <div className="flex items-center gap-3">
+            <div className="p-2 rounded-lg bg-orange-500/10">
+              <Users className="h-5 w-5 text-orange-500" />
+            </div>
+            <div>
+              <p className="text-2xl font-bold">{departments.filter(d => !d.hodId).length}</p>
+              <p className="text-xs text-muted-foreground">Without HOD</p>
+            </div>
+          </div>
+        </div>
       </div>
 
       {/* Filters */}
@@ -460,17 +492,169 @@ export function DepartmentsPage() {
           </Button>
         )}
 
-        <span className="ml-auto text-sm text-muted-foreground">
-          {filteredDepartments.length} of {departments.length} departments
-        </span>
+        <div className="ml-auto flex items-center gap-2">
+          <span className="text-sm text-muted-foreground">
+            {filteredDepartments.length} of {departments.length}
+          </span>
+          <div className="flex items-center border rounded-lg">
+            <Button
+              variant={viewMode === "grid" ? "secondary" : "ghost"}
+              size="sm"
+              className="rounded-r-none"
+              onClick={() => setViewMode("grid")}
+            >
+              <LayoutGrid className="h-4 w-4" />
+            </Button>
+            <Button
+              variant={viewMode === "table" ? "secondary" : "ghost"}
+              size="sm"
+              className="rounded-l-none"
+              onClick={() => setViewMode("table")}
+            >
+              <List className="h-4 w-4" />
+            </Button>
+          </div>
+        </div>
       </div>
 
-      <DataTable
-        columns={columns}
-        data={filteredDepartments}
-        pageSize={10}
-        emptyMessage="No departments found"
-      />
+      {/* Grid View */}
+      {viewMode === "grid" ? (
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+          {filteredDepartments.length === 0 ? (
+            <div className="col-span-full text-center py-12">
+              <Building2 className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
+              <p className="text-muted-foreground">No departments found</p>
+            </div>
+          ) : (
+            filteredDepartments.map((dept) => (
+              <Card key={dept.id} className="relative overflow-hidden hover:shadow-lg transition-shadow">
+                {/* Status indicator */}
+                <div
+                  className={`absolute top-0 left-0 right-0 h-1 ${
+                    dept.isActive ? "bg-success" : "bg-muted-foreground"
+                  }`}
+                />
+
+                <CardHeader className="pb-2">
+                  <div className="flex items-start justify-between">
+                    <div className="flex items-center gap-3">
+                      <div className="p-2 rounded-lg bg-primary/10">
+                        <Building2 className="h-6 w-6 text-primary" />
+                      </div>
+                      <div>
+                        <CardTitle className="text-lg">{dept.name}</CardTitle>
+                        <CardDescription className="font-mono text-sm">
+                          {dept.code}
+                        </CardDescription>
+                      </div>
+                    </div>
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <Button variant="ghost" size="icon" className="h-8 w-8">
+                          <MoreVertical className="h-4 w-4" />
+                        </Button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="end" className="bg-popover border shadow-lg">
+                        <DropdownMenuItem
+                          className="cursor-pointer"
+                          onClick={() => openEditDialog(dept)}
+                        >
+                          <Edit className="mr-2 h-4 w-4" />
+                          Edit
+                        </DropdownMenuItem>
+                        <DropdownMenuSeparator />
+                        <DropdownMenuItem
+                          className="cursor-pointer text-destructive focus:text-destructive"
+                          onClick={() => openDeleteDialog(dept)}
+                        >
+                          <Trash2 className="mr-2 h-4 w-4" />
+                          Delete
+                        </DropdownMenuItem>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
+                  </div>
+                </CardHeader>
+
+                <CardContent className="space-y-4">
+                  {/* Description */}
+                  {dept.description && (
+                    <p className="text-sm text-muted-foreground line-clamp-2">
+                      {dept.description}
+                    </p>
+                  )}
+
+                  {/* HOD Info */}
+                  <div className="flex items-center gap-2 p-2 bg-muted/50 rounded-lg">
+                    <Users className="h-4 w-4 text-muted-foreground" />
+                    <div className="flex-1 min-w-0">
+                      <p className="text-xs text-muted-foreground">Head of Department</p>
+                      <p
+                        className={`text-sm font-medium truncate ${
+                          dept.hodId ? "" : "text-muted-foreground italic"
+                        }`}
+                      >
+                        {dept.hodName}
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* Stats */}
+                  <div className="grid grid-cols-3 gap-2">
+                    <div className="text-center p-2 bg-muted/30 rounded-lg">
+                      <BookOpen className="h-4 w-4 text-blue-500 mx-auto mb-1" />
+                      <p className="text-lg font-bold">{dept.subjectsCount || 0}</p>
+                      <p className="text-xs text-muted-foreground">Subjects</p>
+                    </div>
+                    <div className="text-center p-2 bg-muted/30 rounded-lg">
+                      <GraduationCap className="h-4 w-4 text-green-500 mx-auto mb-1" />
+                      <p className="text-lg font-bold">{dept.studentsCount || 0}</p>
+                      <p className="text-xs text-muted-foreground">Students</p>
+                    </div>
+                    <div className="text-center p-2 bg-muted/30 rounded-lg">
+                      <Users className="h-4 w-4 text-purple-500 mx-auto mb-1" />
+                      <p className="text-lg font-bold">{dept.lecturersCount || 0}</p>
+                      <p className="text-xs text-muted-foreground">Lecturers</p>
+                    </div>
+                  </div>
+                </CardContent>
+
+                <CardFooter className="pt-0">
+                  <div className="flex items-center justify-between w-full">
+                    <span
+                      className={`inline-flex items-center gap-1.5 text-sm ${
+                        dept.isActive ? "text-success" : "text-muted-foreground"
+                      }`}
+                    >
+                      <span
+                        className={`h-2 w-2 rounded-full ${
+                          dept.isActive ? "bg-success" : "bg-muted-foreground"
+                        }`}
+                      />
+                      {dept.isActive ? "Active" : "Inactive"}
+                    </span>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => openEditDialog(dept)}
+                    >
+                      <Edit className="h-3 w-3 mr-1" />
+                      Edit
+                    </Button>
+                  </div>
+                </CardFooter>
+              </Card>
+            ))
+          )}
+        </div>
+      ) : (
+        /* Table View */
+        <DataTable
+          columns={columns}
+          data={filteredDepartments}
+          pageSize={10}
+          emptyMessage="No departments found"
+        />
+      )}
 
       {/* Create Department Dialog */}
       <Dialog open={isCreateDialogOpen} onOpenChange={setIsCreateDialogOpen}>

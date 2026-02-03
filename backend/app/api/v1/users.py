@@ -22,6 +22,7 @@ def get_users(
     role_id: Optional[int] = None,
     department_id: Optional[int] = None,
     is_active: Optional[bool] = None,
+    batch: Optional[str] = None,
     page: int = QueryParam(1, ge=1),
     page_size: int = QueryParam(20, ge=1, le=100),
     db: Session = Depends(get_db),
@@ -31,6 +32,9 @@ def get_users(
     Get all users with filtering and pagination (Super Admin only).
 
     Requires: VIEW_ALL_USERS permission
+
+    Parameters:
+    - batch: Filter students by batch (e.g., "E20", "E21"). Matches student_id patterns like "E/20/xxx" or "E20/xxx".
     """
     query = db.query(User).options(
         joinedload(User.role),
@@ -56,6 +60,17 @@ def get_users(
 
     if is_active is not None:
         query = query.filter(User.is_active == is_active)
+
+    # Filter by batch (e.g., "E20" matches "E/20/xxx", "E20/xxx", "E.20.xxx", "E-20-xxx")
+    if batch:
+        import re
+        match = re.match(r'([A-Z]+)(\d{2})', batch, re.IGNORECASE)
+        if match:
+            prefix = match.group(1).upper()
+            year = match.group(2)
+            # Match patterns like E/20/%, E20/%, E.20.%, E-20-%
+            batch_pattern = f"{prefix}%{year}%"
+            query = query.filter(User.student_id.ilike(batch_pattern))
 
     # Order by most recent first
     query = query.order_by(User.created_at.desc())

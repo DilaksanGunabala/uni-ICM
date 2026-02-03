@@ -2,6 +2,7 @@ import { createContext, useContext, useState, useEffect, ReactNode } from 'react
 import { api } from '@/lib/api';
 import type { BackendUser } from '@/lib/api';
 import { toast } from 'sonner';
+import { AxiosError } from 'axios';
 
 // Map backend roles to frontend UserRole type
 export type UserRole = 'super_admin' | 'hod' | 'lecturer' | 'student';
@@ -101,9 +102,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
       toast.success(`Welcome, ${frontendUser.name}!`);
       return true;
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error('Login failed:', error);
-      const message = error.response?.data?.detail || 'Login failed. Please check your credentials.';
+      const axiosError = error as AxiosError<{ detail?: string }>;
+      const message = axiosError.response?.data?.detail || 'Login failed. Please check your credentials.';
       toast.error(message);
       return false;
     } finally {

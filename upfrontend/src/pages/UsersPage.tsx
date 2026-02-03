@@ -45,7 +45,7 @@ import {
 } from "@/components/ui/select";
 import { UserRole } from "@/types";
 import { useToast } from "@/hooks/use-toast";
-import api, { BackendUser, BackendDepartment } from "@/lib/api";
+import api, { BackendUser, BackendDepartment, getApiErrorMessage } from "@/lib/api";
 
 interface UserData {
   id: string;
@@ -97,6 +97,17 @@ const getInitials = (name: string) =>
     .toUpperCase()
     .slice(0, 2);
 
+// Generate batch options (E20, E21, E22, etc.) based on current year
+const generateBatchOptions = (): string[] => {
+  const currentYear = new Date().getFullYear();
+  const batches: string[] = [];
+  // Generate batches from current year back to 2018
+  for (let year = currentYear; year >= 2018; year--) {
+    batches.push(`E${year.toString().slice(-2)}`);
+  }
+  return batches;
+};
+
 export function UsersPage() {
   const { toast } = useToast();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -129,6 +140,7 @@ export function UsersPage() {
     department_id: "" as string,
     employee_id: "",
     student_id: "",
+    batch: "",
   });
 
   // Stats
@@ -236,7 +248,17 @@ export function UsersPage() {
     try {
       setSaving(true);
 
-      const userData: any = {
+      const userData: {
+        first_name: string;
+        last_name: string;
+        email: string;
+        password: string;
+        role_id: number;
+        department_id?: number;
+        is_active: boolean;
+        employee_id?: string;
+        student_id?: string;
+      } = {
         first_name: formData.first_name,
         last_name: formData.last_name,
         email: formData.email,
@@ -248,7 +270,17 @@ export function UsersPage() {
 
       // Add employee_id or student_id based on role
       if (formData.role === 'STUDENT') {
-        userData.student_id = formData.student_id || `STU${Date.now()}`;
+        // Use provided student_id, or generate one based on batch if batch is selected
+        if (formData.student_id) {
+          userData.student_id = formData.student_id;
+        } else if (formData.batch) {
+          // Generate student_id in format E/XX/XXX where XX is batch year
+          const batchYear = formData.batch.replace(/[A-Z]/gi, '');
+          const randomNum = Math.floor(100 + Math.random() * 900);
+          userData.student_id = `E/${batchYear}/${randomNum}`;
+        } else {
+          userData.student_id = `STU${Date.now()}`;
+        }
       } else {
         userData.employee_id = formData.employee_id || `EMP${Date.now()}`;
       }
@@ -263,10 +295,10 @@ export function UsersPage() {
       setIsCreateDialogOpen(false);
       resetForm();
       fetchUsers();
-    } catch (error: any) {
+    } catch (error: unknown) {
       toast({
         title: "Error",
-        description: error.response?.data?.detail || "Failed to create user.",
+        description: getApiErrorMessage(error, "Failed to create user."),
         variant: "destructive",
       });
     } finally {
@@ -296,10 +328,10 @@ export function UsersPage() {
       setIsEditDialogOpen(false);
       resetForm();
       fetchUsers();
-    } catch (error: any) {
+    } catch (error: unknown) {
       toast({
         title: "Error",
-        description: error.response?.data?.detail || "Failed to update user.",
+        description: getApiErrorMessage(error, "Failed to update user."),
         variant: "destructive",
       });
     } finally {
@@ -322,10 +354,10 @@ export function UsersPage() {
       setIsDeleteDialogOpen(false);
       setSelectedUser(null);
       fetchUsers();
-    } catch (error: any) {
+    } catch (error: unknown) {
       toast({
         title: "Error",
-        description: error.response?.data?.detail || "Failed to delete user.",
+        description: getApiErrorMessage(error, "Failed to delete user."),
         variant: "destructive",
       });
     } finally {
@@ -343,8 +375,20 @@ export function UsersPage() {
       department_id: "",
       employee_id: "",
       student_id: "",
+      batch: "",
     });
     setSelectedUser(null);
+  };
+
+  // Extract batch from student ID (e.g., "E/20/123" -> "E20")
+  const extractBatchFromStudentId = (studentId: string | undefined): string => {
+    if (!studentId) return '';
+    // Match patterns like E/20/123, E20/123, E.20.123, E-20-123
+    const match = studentId.match(/([A-Z]+)[/.\-]?(\d{2})[/.\-]?\d*/i);
+    if (match) {
+      return `${match[1].toUpperCase()}${match[2]}`;
+    }
+    return '';
   };
 
   const openEditDialog = (user: UserData) => {
@@ -359,6 +403,7 @@ export function UsersPage() {
       department_id: user.departmentId?.toString() || "",
       employee_id: user.employeeId || "",
       student_id: user.studentId || "",
+      batch: extractBatchFromStudentId(user.studentId),
     });
     setIsEditDialogOpen(true);
   };
@@ -749,23 +794,45 @@ export function UsersPage() {
                 </Select>
               </div>
             </div>
-            <div className="space-y-2">
-              <Label htmlFor="id_number">
-                {formData.role === 'STUDENT' ? 'Student ID' : 'Employee ID'}
-              </Label>
-              <Input
-                id="id_number"
-                value={formData.role === 'STUDENT' ? formData.student_id : formData.employee_id}
-                onChange={(e) => {
-                  if (formData.role === 'STUDENT') {
-                    setFormData({ ...formData, student_id: e.target.value });
-                  } else {
-                    setFormData({ ...formData, employee_id: e.target.value });
-                  }
-                }}
-                placeholder={formData.role === 'STUDENT' ? 'e.g., STU2024001' : 'e.g., EMP001'}
-              />
-            </div>
+            {formData.role === 'STUDENT' ? (
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label htmlFor="student_id">Student ID</Label>
+                  <Input
+                    id="student_id"
+                    value={formData.student_id}
+                    onChange={(e) => setFormData({ ...formData, student_id: e.target.value })}
+                    placeholder="e.g., E/20/123"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="batch">Batch</Label>
+                  <Select value={formData.batch || "none"} onValueChange={(value) => setFormData({ ...formData, batch: value === "none" ? "" : value })}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select batch" />
+                    </SelectTrigger>
+                    <SelectContent className="bg-popover">
+                      <SelectItem value="none">Select batch</SelectItem>
+                      {generateBatchOptions().map((batch) => (
+                        <SelectItem key={batch} value={batch}>
+                          {batch}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+            ) : (
+              <div className="space-y-2">
+                <Label htmlFor="employee_id">Employee ID</Label>
+                <Input
+                  id="employee_id"
+                  value={formData.employee_id}
+                  onChange={(e) => setFormData({ ...formData, employee_id: e.target.value })}
+                  placeholder="e.g., EMP001"
+                />
+              </div>
+            )}
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => { setIsCreateDialogOpen(false); resetForm(); }} disabled={saving}>

@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { useAuth } from "@/contexts/AuthContext";
-import { api } from "@/lib/api";
+import { api, getApiErrorMessage } from "@/lib/api";
 import { PageHeader } from "@/components/ui/page-header";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -93,9 +93,9 @@ export function SettingsPage() {
         title: "Profile Updated",
         description: "Your profile information has been saved successfully.",
       });
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error("Failed to update profile:", error);
-      const message = error.response?.data?.detail || "Failed to update profile. Please try again.";
+      const message = getApiErrorMessage(error, "Failed to update profile. Please try again.");
       toast({
         title: "Error",
         description: message,
@@ -155,9 +155,9 @@ export function SettingsPage() {
         title: "Password Changed",
         description: "Your password has been updated successfully.",
       });
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error("Failed to change password:", error);
-      const message = error.response?.data?.detail || "Failed to change password. Please try again.";
+      const message = getApiErrorMessage(error, "Failed to change password. Please try again.");
       toast({
         title: "Error",
         description: message,
@@ -192,9 +192,9 @@ export function SettingsPage() {
         title: "Avatar Updated",
         description: "Your profile picture has been updated successfully.",
       });
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error("Failed to upload avatar:", error);
-      const message = error.response?.data?.detail || "Failed to upload avatar. Please try again.";
+      const message = getApiErrorMessage(error, "Failed to upload avatar. Please try again.");
       toast({
         title: "Error",
         description: message,
@@ -212,9 +212,9 @@ export function SettingsPage() {
         title: "Avatar Removed",
         description: "Your profile picture has been removed.",
       });
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error("Failed to delete avatar:", error);
-      const message = error.response?.data?.detail || "Failed to delete avatar. Please try again.";
+      const message = getApiErrorMessage(error, "Failed to delete avatar. Please try again.");
       toast({
         title: "Error",
         description: message,

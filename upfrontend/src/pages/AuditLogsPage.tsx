@@ -52,8 +52,8 @@ interface AuditLogData {
   recordId: number;
   user: string;
   userEmail: string;
-  oldValue: string | null;
-  newValue: string | null;
+  oldValue: Record<string, unknown> | null;
+  newValue: Record<string, unknown> | null;
   timestamp: string;
   formattedTime: string;
   ipAddress: string | null;
@@ -165,7 +165,7 @@ export function AuditLogsPage() {
         setLoading(true);
       }
 
-      const params: any = {
+      const params: { page: number; page_size: number; action?: string; table_name?: string } = {
         page: pageNum,
         page_size: pageSize,
       };

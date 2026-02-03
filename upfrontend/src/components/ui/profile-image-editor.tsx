@@ -139,7 +139,7 @@ export function ProfileImageEditor({
       .slice(0, 2);
 
   const onCropComplete = useCallback(
-    (_croppedArea: any, croppedAreaPixels: CroppedAreaPixels) => {
+    (_croppedArea: { x: number; y: number; width: number; height: number }, croppedAreaPixels: CroppedAreaPixels) => {
       setCroppedAreaPixels(croppedAreaPixels);
     },
     []

@@ -20,13 +20,36 @@ interface UserFormData {
   department_id?: number;
   employee_id?: string;
   student_id?: string;
+  batch?: string;
   is_active: boolean;
 }
+
+// Helper function to extract batch from student_id (e.g., "E/20/123" -> "E20")
+const extractBatchFromStudentId = (studentId: string | undefined): string => {
+  if (!studentId) return '';
+  const match = studentId.match(/([A-Z]+)[/.\-]?(\d{2})[/.\-]?\d*/i);
+  if (match) {
+    return `${match[1].toUpperCase()}${match[2]}`;
+  }
+  return '';
+};
+
+// Generate batch options (current year back to 2020)
+const generateBatchOptions = (): string[] => {
+  const currentYear = new Date().getFullYear();
+  const batches: string[] = [];
+  // Generate batches from current year back to 2020 (E26, E25, E24, ..., E20)
+  for (let year = currentYear; year >= 2020; year--) {
+    batches.push(`E${year.toString().slice(-2)}`);
+  }
+  return batches;
+};
 
 interface Filters {
   search: string;
   role_id?: number;
   department_id?: number;
+  batch?: string;
 }
 
 export default function UsersPage() {
@@ -44,6 +67,7 @@ export default function UsersPage() {
     search: '',
     role_id: undefined,
     department_id: undefined,
+    batch: undefined,
   });
 
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
@@ -61,8 +85,11 @@ export default function UsersPage() {
     department_id: undefined,
     employee_id: '',
     student_id: '',
+    batch: '',
     is_active: true,
   });
+
+  const batchOptions = generateBatchOptions();
 
   const roles = [
     { id: 1, name: 'SUPER_ADMIN', label: 'Super Admin' },
@@ -83,6 +110,7 @@ export default function UsersPage() {
       if (filters.search) params.search = filters.search;
       if (filters.role_id) params.role_id = filters.role_id;
       if (filters.department_id) params.department_id = filters.department_id;
+      if (filters.batch) params.batch = filters.batch;
 
       const response: PaginatedResponse<User> = await api.getUsers(params);
       setUsers(response.items);
@@ -128,7 +156,7 @@ export default function UsersPage() {
   };
 
   const clearFilters = () => {
-    setFilters({ search: '', role_id: undefined, department_id: undefined });
+    setFilters({ search: '', role_id: undefined, department_id: undefined, batch: undefined });
     setPagination({ ...pagination, page: 1 });
   };
 
@@ -142,6 +170,7 @@ export default function UsersPage() {
       department_id: undefined,
       employee_id: '',
       student_id: '',
+      batch: '',
       is_active: true,
     });
     setIsCreateModalOpen(true);
@@ -158,6 +187,7 @@ export default function UsersPage() {
       department_id: user.department_id || undefined,
       employee_id: user.employee_id || '',
       student_id: user.student_id || '',
+      batch: extractBatchFromStudentId(user.student_id),
       is_active: user.is_active,
     });
     setIsEditModalOpen(true);
@@ -274,8 +304,9 @@ export default function UsersPage() {
     <div className="space-y-4">
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         <div>
-          <label className="label">First Name</label>
+          <label htmlFor="first_name" className="label">First Name</label>
           <input
+            id="first_name"
             type="text"
             className="input"
             value={formData.first_name}
@@ -285,8 +316,9 @@ export default function UsersPage() {
         </div>
 
         <div>
-          <label className="label">Last Name</label>
+          <label htmlFor="last_name" className="label">Last Name</label>
           <input
+            id="last_name"
             type="text"
             className="input"
             value={formData.last_name}
@@ -297,8 +329,9 @@ export default function UsersPage() {
       </div>
 
       <div>
-        <label className="label">Email</label>
+        <label htmlFor="email" className="label">Email</label>
         <input
+          id="email"
           type="email"
           className="input"
           value={formData.email}
@@ -308,10 +341,11 @@ export default function UsersPage() {
       </div>
 
       <div>
-        <label className="label">
+        <label htmlFor="password" className="label">
           Password {selectedUser && '(leave blank to keep unchanged)'}
         </label>
         <input
+          id="password"
           type="password"
           className="input"
           value={formData.password}
@@ -321,68 +355,106 @@ export default function UsersPage() {
         />
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        <div>
-          <label className="label">Role</label>
-          <select
-            className="input"
-            value={formData.role_id}
-            onChange={(e) => setFormData({ ...formData, role_id: parseInt(e.target.value) })}
-            required
-          >
-            {roles.map((role) => (
-              <option key={role.id} value={role.id}>
-                {role.label}
-              </option>
-            ))}
-          </select>
-        </div>
-
-        <div>
-          <label className="label">Department</label>
-          <select
-            className="input"
-            value={formData.department_id || ''}
-            onChange={(e) =>
-              setFormData({
-                ...formData,
-                department_id: e.target.value ? parseInt(e.target.value) : undefined,
-              })
-            }
-          >
-            <option value="">None</option>
-            {departments.map((dept) => (
-              <option key={dept.id} value={dept.id}>
-                {dept.name}
-              </option>
-            ))}
-          </select>
-        </div>
+      <div>
+        <label htmlFor="role_id" className="label">Role</label>
+        <select
+          id="role_id"
+          className="input"
+          value={formData.role_id}
+          onChange={(e) => setFormData({ ...formData, role_id: parseInt(e.target.value) })}
+          required
+        >
+          {roles.map((role) => (
+            <option key={role.id} value={role.id}>
+              {role.label}
+            </option>
+          ))}
+        </select>
       </div>
 
-      {formData.role_id === 4 && (
-        <div>
-          <label className="label">Student ID</label>
-          <input
-            type="text"
-            className="input"
-            value={formData.student_id}
-            onChange={(e) => setFormData({ ...formData, student_id: e.target.value })}
-          />
-        </div>
-      )}
+      <div>
+        <label htmlFor="department_id" className="label">Department</label>
+        <select
+          id="department_id"
+          className="input"
+          value={formData.department_id || ''}
+          onChange={(e) =>
+            setFormData({
+              ...formData,
+              department_id: e.target.value ? parseInt(e.target.value) : undefined,
+            })
+          }
+        >
+          <option value="">None</option>
+          {departments.map((dept) => (
+            <option key={dept.id} value={dept.id}>
+              {dept.name}
+            </option>
+          ))}
+        </select>
+      </div>
 
-      {(formData.role_id === 2 || formData.role_id === 3) && (
-        <div>
-          <label className="label">Employee ID</label>
-          <input
-            type="text"
-            className="input"
-            value={formData.employee_id}
-            onChange={(e) => setFormData({ ...formData, employee_id: e.target.value })}
-          />
-        </div>
-      )}
+      <div>
+        <label htmlFor="batch" className="label">
+          Batch {formData.role_id === 4 && <span className="text-red-500">*</span>}
+        </label>
+        <select
+          id="batch"
+          className="input"
+          value={formData.batch || ''}
+          onChange={(e) => setFormData({ ...formData, batch: e.target.value })}
+          required={formData.role_id === 4}
+          disabled={formData.role_id !== 4}
+        >
+          <option value="">Select Batch</option>
+          {batchOptions.map((batch) => (
+            <option key={batch} value={batch}>
+              {batch}
+            </option>
+          ))}
+        </select>
+        <p className="text-xs text-gray-500 mt-1">
+          {formData.role_id === 4 ? 'e.g., E20 = 2020 intake, E21 = 2021 intake' : 'Only applicable for students'}
+        </p>
+      </div>
+
+      <div>
+        <label htmlFor="student_id" className="label">
+          Student ID {formData.role_id === 4 && <span className="text-red-500">*</span>}
+        </label>
+        <input
+          id="student_id"
+          type="text"
+          className="input"
+          value={formData.student_id}
+          onChange={(e) => setFormData({ ...formData, student_id: e.target.value })}
+          placeholder="e.g., E/20/123"
+          required={formData.role_id === 4}
+          disabled={formData.role_id !== 4}
+        />
+        <p className="text-xs text-gray-500 mt-1">
+          {formData.role_id === 4 ? 'Full student ID number' : 'Only applicable for students'}
+        </p>
+      </div>
+
+      <div>
+        <label htmlFor="employee_id" className="label">
+          Employee ID {(formData.role_id === 2 || formData.role_id === 3) && <span className="text-red-500">*</span>}
+        </label>
+        <input
+          id="employee_id"
+          type="text"
+          className="input"
+          value={formData.employee_id}
+          onChange={(e) => setFormData({ ...formData, employee_id: e.target.value })}
+          placeholder="e.g., EMP001"
+          required={formData.role_id === 2 || formData.role_id === 3}
+          disabled={formData.role_id !== 2 && formData.role_id !== 3}
+        />
+        <p className="text-xs text-gray-500 mt-1">
+          {(formData.role_id === 2 || formData.role_id === 3) ? 'Staff employee ID' : 'Only applicable for HOD/Lecturer'}
+        </p>
+      </div>
 
       <div className="flex items-center">
         <input
@@ -485,7 +557,22 @@ export default function UsersPage() {
                 ))}
               </select>
 
-              {(filters.search || filters.role_id || filters.department_id) && (
+              <select
+                className="input"
+                value={filters.batch || ''}
+                onChange={(e) =>
+                  handleFilterChange('batch', e.target.value || undefined)
+                }
+              >
+                <option value="">All Batches</option>
+                {batchOptions.map((batch) => (
+                  <option key={batch} value={batch}>
+                    {batch}
+                  </option>
+                ))}
+              </select>
+
+              {(filters.search || filters.role_id || filters.department_id || filters.batch) && (
                 <button
                   onClick={clearFilters}
                   className="px-4 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 flex items-center space-x-2"
@@ -530,6 +617,9 @@ export default function UsersPage() {
                         ID
                       </th>
                       <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">
+                        Batch
+                      </th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">
                         Status
                       </th>
                       <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">
@@ -561,6 +651,15 @@ export default function UsersPage() {
                         <td className="px-6 py-4 whitespace-nowrap">
                           <div className="text-sm text-gray-600">
                             {user.employee_id || user.student_id || '-'}
+                          </div>
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap">
+                          <div className="text-sm text-gray-600">
+                            {user.student_id ? (
+                              <span className="badge bg-blue-100 text-blue-800">
+                                {extractBatchFromStudentId(user.student_id) || '-'}
+                              </span>
+                            ) : '-'}
                           </div>
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap">
