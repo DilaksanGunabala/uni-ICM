@@ -1,4 +1,4 @@
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
 from typing import Optional
 from app.models.audit_log import AuditLog
 from app.core.constants import AuditAction
@@ -8,8 +8,8 @@ class AuditService:
     """Service for audit logging operations"""
 
     @staticmethod
-    def log_action(
-        db: Session,
+    async def log_action(
+        db: AsyncSession,
         table_name: str,
         record_id: int,
         action: AuditAction,
@@ -51,14 +51,14 @@ class AuditService:
         )
 
         db.add(audit_log)
-        db.commit()
-        db.refresh(audit_log)
+        await db.commit()
+        await db.refresh(audit_log)
 
         return audit_log
 
     @staticmethod
-    def log_insert(
-        db: Session,
+    async def log_insert(
+        db: AsyncSession,
         table_name: str,
         record_id: int,
         performed_by: int,
@@ -66,7 +66,7 @@ class AuditService:
         user_agent: Optional[str] = None
     ) -> AuditLog:
         """Log an INSERT action"""
-        return AuditService.log_action(
+        return await AuditService.log_action(
             db=db,
             table_name=table_name,
             record_id=record_id,
@@ -77,8 +77,8 @@ class AuditService:
         )
 
     @staticmethod
-    def log_update(
-        db: Session,
+    async def log_update(
+        db: AsyncSession,
         table_name: str,
         record_id: int,
         performed_by: int,
@@ -89,7 +89,7 @@ class AuditService:
         user_agent: Optional[str] = None
     ) -> AuditLog:
         """Log an UPDATE action"""
-        return AuditService.log_action(
+        return await AuditService.log_action(
             db=db,
             table_name=table_name,
             record_id=record_id,
@@ -103,8 +103,8 @@ class AuditService:
         )
 
     @staticmethod
-    def log_delete(
-        db: Session,
+    async def log_delete(
+        db: AsyncSession,
         table_name: str,
         record_id: int,
         performed_by: int,
@@ -112,7 +112,7 @@ class AuditService:
         user_agent: Optional[str] = None
     ) -> AuditLog:
         """Log a DELETE action"""
-        return AuditService.log_action(
+        return await AuditService.log_action(
             db=db,
             table_name=table_name,
             record_id=record_id,
@@ -123,8 +123,8 @@ class AuditService:
         )
 
     @staticmethod
-    def log_approve(
-        db: Session,
+    async def log_approve(
+        db: AsyncSession,
         table_name: str,
         record_id: int,
         performed_by: int,
@@ -132,7 +132,7 @@ class AuditService:
         user_agent: Optional[str] = None
     ) -> AuditLog:
         """Log an APPROVE action"""
-        return AuditService.log_action(
+        return await AuditService.log_action(
             db=db,
             table_name=table_name,
             record_id=record_id,
@@ -143,8 +143,8 @@ class AuditService:
         )
 
     @staticmethod
-    def log_reject(
-        db: Session,
+    async def log_reject(
+        db: AsyncSession,
         table_name: str,
         record_id: int,
         performed_by: int,
@@ -153,7 +153,7 @@ class AuditService:
         user_agent: Optional[str] = None
     ) -> AuditLog:
         """Log a REJECT action"""
-        return AuditService.log_action(
+        return await AuditService.log_action(
             db=db,
             table_name=table_name,
             record_id=record_id,

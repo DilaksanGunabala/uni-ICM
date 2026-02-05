@@ -1,5 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, status, Query as QueryParam
-from sqlalchemy.orm import Session, joinedload
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select, func
+from sqlalchemy.orm import selectinload
 from typing import Optional
 from datetime import datetime, date
 
@@ -16,7 +18,7 @@ router = APIRouter()
 
 
 @router.get("/", response_model=dict)
-def get_audit_logs(
+async def get_audit_logs(
     table_name: Optional[str] = None,
     action: Optional[str] = None,
     record_id: Optional[int] = None,
@@ -25,7 +27,7 @@ def get_audit_logs(
     date_to: Optional[date] = None,
     page: int = QueryParam(1, ge=1),
     page_size: int = QueryParam(20, ge=1, le=100),
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_permission(Permission.VIEW_AUDIT_LOGS))
 ):
     """
@@ -41,34 +43,34 @@ def get_audit_logs(
     - date_from: Filter logs from this date onwards (YYYY-MM-DD)
     - date_to: Filter logs up to this date (YYYY-MM-DD)
     """
-    query = db.query(AuditLog).options(
-        joinedload(AuditLog.user)
+    stmt = select(AuditLog).options(
+        selectinload(AuditLog.user)
     )
 
     # Apply filters
     if table_name:
-        query = query.filter(AuditLog.table_name == table_name)
+        stmt = stmt.where(AuditLog.table_name == table_name)
 
     if action:
-        query = query.filter(AuditLog.action == action)
+        stmt = stmt.where(AuditLog.action == action)
 
     if record_id is not None:
-        query = query.filter(AuditLog.record_id == record_id)
+        stmt = stmt.where(AuditLog.record_id == record_id)
 
     if performed_by is not None:
-        query = query.filter(AuditLog.performed_by == performed_by)
+        stmt = stmt.where(AuditLog.performed_by == performed_by)
 
     if date_from:
-        query = query.filter(AuditLog.timestamp >= datetime.combine(date_from, datetime.min.time()))
+        stmt = stmt.where(AuditLog.timestamp >= datetime.combine(date_from, datetime.min.time()))
 
     if date_to:
-        query = query.filter(AuditLog.timestamp <= datetime.combine(date_to, datetime.max.time()))
+        stmt = stmt.where(AuditLog.timestamp <= datetime.combine(date_to, datetime.max.time()))
 
     # Order by most recent first
-    query = query.order_by(AuditLog.timestamp.desc())
+    stmt = stmt.order_by(AuditLog.timestamp.desc())
 
     # Paginate
-    paginated = paginate(query, page, page_size)
+    paginated = await paginate(db, stmt, page, page_size)
 
     # Build response
     items = []
@@ -80,9 +82,9 @@ def get_audit_logs(
 
 
 @router.get("/{audit_log_id}", response_model=AuditLogWithDetails)
-def get_audit_log(
+async def get_audit_log(
     audit_log_id: int,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_permission(Permission.VIEW_AUDIT_LOGS))
 ):
     """
@@ -90,9 +92,12 @@ def get_audit_log(
 
     Requires: VIEW_AUDIT_LOGS permission (Super Admin only)
     """
-    audit_log = db.query(AuditLog).options(
-        joinedload(AuditLog.user)
-    ).filter(AuditLog.id == audit_log_id).first()
+    result = await db.execute(
+        select(AuditLog).options(
+            selectinload(AuditLog.user)
+        ).where(AuditLog.id == audit_log_id)
+    )
+    audit_log = result.scalars().first()
 
     if not audit_log:
         raise HTTPException(
@@ -108,10 +113,10 @@ def get_audit_log(
 # ============================================================================
 
 @router.get("/record/{table_name}/{record_id}", response_model=list[AuditLogWithDetails])
-def get_record_audit_trail(
+async def get_record_audit_trail(
     table_name: str,
     record_id: int,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_permission(Permission.VIEW_AUDIT_LOGS))
 ):
     """
@@ -123,12 +128,15 @@ def get_record_audit_trail(
     Example: GET /api/v1/audit-logs/record/marks/123
     Returns all audit logs for the mark with ID 123.
     """
-    audit_logs = db.query(AuditLog).options(
-        joinedload(AuditLog.user)
-    ).filter(
-        AuditLog.table_name == table_name,
-        AuditLog.record_id == record_id
-    ).order_by(AuditLog.timestamp.desc()).all()
+    result = await db.execute(
+        select(AuditLog).options(
+            selectinload(AuditLog.user)
+        ).where(
+            AuditLog.table_name == table_name,
+            AuditLog.record_id == record_id
+        ).order_by(AuditLog.timestamp.desc())
+    )
+    audit_logs = result.scalars().unique().all()
 
     results = []
     for log in audit_logs:
@@ -142,7 +150,7 @@ def get_record_audit_trail(
 # ============================================================================
 
 @router.get("/user/{user_id}/actions", response_model=dict)
-def get_user_actions(
+async def get_user_actions(
     user_id: int,
     table_name: Optional[str] = None,
     action: Optional[str] = None,
@@ -150,7 +158,7 @@ def get_user_actions(
     date_to: Optional[date] = None,
     page: int = QueryParam(1, ge=1),
     page_size: int = QueryParam(20, ge=1, le=100),
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_permission(Permission.VIEW_AUDIT_LOGS))
 ):
     """
@@ -166,35 +174,36 @@ def get_user_actions(
     - date_to: Filter actions up to this date
     """
     # Verify user exists
-    user = db.query(User).filter(User.id == user_id).first()
+    result = await db.execute(select(User).where(User.id == user_id))
+    user = result.scalars().first()
     if not user:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="User not found"
         )
 
-    query = db.query(AuditLog).options(
-        joinedload(AuditLog.user)
-    ).filter(AuditLog.performed_by == user_id)
+    stmt = select(AuditLog).options(
+        selectinload(AuditLog.user)
+    ).where(AuditLog.performed_by == user_id)
 
     # Apply filters
     if table_name:
-        query = query.filter(AuditLog.table_name == table_name)
+        stmt = stmt.where(AuditLog.table_name == table_name)
 
     if action:
-        query = query.filter(AuditLog.action == action)
+        stmt = stmt.where(AuditLog.action == action)
 
     if date_from:
-        query = query.filter(AuditLog.timestamp >= datetime.combine(date_from, datetime.min.time()))
+        stmt = stmt.where(AuditLog.timestamp >= datetime.combine(date_from, datetime.min.time()))
 
     if date_to:
-        query = query.filter(AuditLog.timestamp <= datetime.combine(date_to, datetime.max.time()))
+        stmt = stmt.where(AuditLog.timestamp <= datetime.combine(date_to, datetime.max.time()))
 
     # Order by most recent first
-    query = query.order_by(AuditLog.timestamp.desc())
+    stmt = stmt.order_by(AuditLog.timestamp.desc())
 
     # Paginate
-    paginated = paginate(query, page, page_size)
+    paginated = await paginate(db, stmt, page, page_size)
 
     # Build response
     items = []
@@ -216,10 +225,10 @@ def get_user_actions(
 # ============================================================================
 
 @router.get("/stats/summary", response_model=dict)
-def get_audit_stats(
+async def get_audit_stats(
     date_from: Optional[date] = None,
     date_to: Optional[date] = None,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_permission(Permission.VIEW_AUDIT_LOGS))
 ):
     """
@@ -228,44 +237,60 @@ def get_audit_stats(
     Returns counts by action type, table name, and top users.
     Requires: VIEW_AUDIT_LOGS permission (Super Admin only)
     """
-    from sqlalchemy import func
-
-    query = db.query(AuditLog)
-
-    # Apply date filters
+    # Build base filter conditions
+    conditions = []
     if date_from:
-        query = query.filter(AuditLog.timestamp >= datetime.combine(date_from, datetime.min.time()))
-
+        conditions.append(AuditLog.timestamp >= datetime.combine(date_from, datetime.min.time()))
     if date_to:
-        query = query.filter(AuditLog.timestamp <= datetime.combine(date_to, datetime.max.time()))
+        conditions.append(AuditLog.timestamp <= datetime.combine(date_to, datetime.max.time()))
 
     # Total count
-    total_count = query.count()
+    count_stmt = select(func.count(AuditLog.id))
+    if conditions:
+        count_stmt = count_stmt.where(*conditions)
+    result = await db.execute(count_stmt)
+    total_count = result.scalar()
 
     # Count by action
-    actions = query.with_entities(
+    action_stmt = select(
         AuditLog.action,
         func.count(AuditLog.id).label('count')
-    ).group_by(AuditLog.action).all()
+    ).group_by(AuditLog.action)
+    if conditions:
+        action_stmt = action_stmt.where(*conditions)
+    result = await db.execute(action_stmt)
+    actions = result.all()
 
     # Count by table
-    tables = query.with_entities(
+    table_stmt = select(
         AuditLog.table_name,
         func.count(AuditLog.id).label('count')
-    ).group_by(AuditLog.table_name).all()
+    ).group_by(AuditLog.table_name)
+    if conditions:
+        table_stmt = table_stmt.where(*conditions)
+    result = await db.execute(table_stmt)
+    tables = result.all()
 
     # Top 10 most active users
-    top_users = query.with_entities(
+    top_users_stmt = select(
         AuditLog.performed_by,
         func.count(AuditLog.id).label('count')
     ).group_by(AuditLog.performed_by).order_by(
         func.count(AuditLog.id).desc()
-    ).limit(10).all()
+    ).limit(10)
+    if conditions:
+        top_users_stmt = top_users_stmt.where(*conditions)
+    result = await db.execute(top_users_stmt)
+    top_users = result.all()
 
     # Get user details for top users
-    user_ids = [user[0] for user in top_users]
-    users = db.query(User).filter(User.id.in_(user_ids)).all()
-    user_map = {user.id: user for user in users}
+    user_ids = [user_id for user_id, _ in top_users]
+    if user_ids:
+        result = await db.execute(select(User).where(User.id.in_(user_ids)))
+        users = result.scalars().all()
+        user_map = {u.id: u for u in users}
+    else:
+        user_map = {}
 
     top_users_with_details = [
         {

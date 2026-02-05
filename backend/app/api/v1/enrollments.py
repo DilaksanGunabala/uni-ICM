@@ -1,5 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, status, Query as QueryParam
-from sqlalchemy.orm import Session, joinedload
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
+from sqlalchemy.orm import selectinload
 from typing import Optional, List
 from datetime import date
 
@@ -23,14 +25,14 @@ router = APIRouter()
 
 
 @router.get("/", response_model=dict)
-def get_enrollments(
+async def get_enrollments(
     student_id: Optional[int] = None,
     subject_id: Optional[int] = None,
     academic_year: Optional[str] = None,
     status_filter: Optional[EnrollmentStatus] = QueryParam(None, alias="status"),
     page: int = QueryParam(1, ge=1),
     page_size: int = QueryParam(20, ge=1, le=100),
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_permission(Permission.VIEW_ALL_ENROLLMENTS))
 ):
     """
@@ -38,29 +40,29 @@ def get_enrollments(
 
     Requires: VIEW_ALL_ENROLLMENTS permission (Super Admin, HOD)
     """
-    query = db.query(Enrollment).options(
-        joinedload(Enrollment.student),
-        joinedload(Enrollment.subject).joinedload(Subject.department)
+    stmt = select(Enrollment).options(
+        selectinload(Enrollment.student),
+        selectinload(Enrollment.subject).selectinload(Subject.department)
     )
 
     # Apply filters
     if student_id is not None:
-        query = query.filter(Enrollment.student_id == student_id)
+        stmt = stmt.where(Enrollment.student_id == student_id)
 
     if subject_id is not None:
-        query = query.filter(Enrollment.subject_id == subject_id)
+        stmt = stmt.where(Enrollment.subject_id == subject_id)
 
     if academic_year is not None:
-        query = query.filter(Enrollment.academic_year == academic_year)
+        stmt = stmt.where(Enrollment.academic_year == academic_year)
 
     if status_filter is not None:
-        query = query.filter(Enrollment.status == status_filter)
+        stmt = stmt.where(Enrollment.status == status_filter)
 
     # Order by enrollment date (most recent first)
-    query = query.order_by(Enrollment.enrollment_date.desc())
+    stmt = stmt.order_by(Enrollment.enrollment_date.desc())
 
     # Paginate
-    paginated = paginate(query, page, page_size)
+    paginated = await paginate(db, stmt, page, page_size)
 
     # Build response
     items = []
@@ -72,9 +74,9 @@ def get_enrollments(
 
 
 @router.get("/{enrollment_id}", response_model=EnrollmentWithDetails)
-def get_enrollment(
+async def get_enrollment(
     enrollment_id: int,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_permission(Permission.VIEW_ALL_ENROLLMENTS))
 ):
     """
@@ -82,10 +84,13 @@ def get_enrollment(
 
     Requires: VIEW_ALL_ENROLLMENTS permission (Super Admin, HOD)
     """
-    enrollment = db.query(Enrollment).options(
-        joinedload(Enrollment.student),
-        joinedload(Enrollment.subject).joinedload(Subject.department)
-    ).filter(Enrollment.id == enrollment_id).first()
+    result = await db.execute(
+        select(Enrollment).options(
+            selectinload(Enrollment.student),
+            selectinload(Enrollment.subject).selectinload(Subject.department)
+        ).where(Enrollment.id == enrollment_id)
+    )
+    enrollment = result.scalars().first()
 
     if not enrollment:
         raise HTTPException(
@@ -97,9 +102,9 @@ def get_enrollment(
 
 
 @router.post("/", response_model=EnrollmentResponse, status_code=status.HTTP_201_CREATED)
-def create_enrollment(
+async def create_enrollment(
     enrollment_data: EnrollmentCreate,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_permission(Permission.MANAGE_ENROLLMENTS))
 ):
     """
@@ -109,34 +114,35 @@ def create_enrollment(
     """
     # Verify student exists
     from app.models.role import Role
-    student = db.query(User).join(Role).filter(
-        User.id == enrollment_data.student_id,
-        Role.name == "STUDENT"
-    ).first()
-    if not student:
+    result = await db.execute(
+        select(User).join(Role).where(
+            User.id == enrollment_data.student_id,
+            Role.name == "STUDENT"
+        )
+    )
+    if not result.scalars().first():
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Student not found or user is not a student"
         )
 
     # Verify subject exists
-    subject = db.query(Subject).filter(
-        Subject.id == enrollment_data.subject_id
-    ).first()
-    if not subject:
+    result = await db.execute(select(Subject).where(Subject.id == enrollment_data.subject_id))
+    if not result.scalars().first():
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Subject not found"
         )
 
     # Check if enrollment already exists
-    existing = db.query(Enrollment).filter(
-        Enrollment.student_id == enrollment_data.student_id,
-        Enrollment.subject_id == enrollment_data.subject_id,
-        Enrollment.academic_year == enrollment_data.academic_year
-    ).first()
-
-    if existing:
+    result = await db.execute(
+        select(Enrollment).where(
+            Enrollment.student_id == enrollment_data.student_id,
+            Enrollment.subject_id == enrollment_data.subject_id,
+            Enrollment.academic_year == enrollment_data.academic_year
+        )
+    )
+    if result.scalars().first():
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail=f"Student already enrolled in this subject for academic year {enrollment_data.academic_year}"
@@ -153,8 +159,8 @@ def create_enrollment(
     )
 
     db.add(new_enrollment)
-    db.commit()
-    db.refresh(new_enrollment)
+    await db.commit()
+    await db.refresh(new_enrollment)
 
     return EnrollmentResponse(
         id=new_enrollment.id,
@@ -170,10 +176,10 @@ def create_enrollment(
 
 
 @router.put("/{enrollment_id}", response_model=EnrollmentResponse)
-def update_enrollment(
+async def update_enrollment(
     enrollment_id: int,
     enrollment_data: EnrollmentUpdate,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_permission(Permission.MANAGE_ENROLLMENTS))
 ):
     """
@@ -182,7 +188,8 @@ def update_enrollment(
     Typically used to change enrollment status (ACTIVE, DROPPED, COMPLETED).
     Requires: MANAGE_ENROLLMENTS permission
     """
-    enrollment = db.query(Enrollment).filter(Enrollment.id == enrollment_id).first()
+    result = await db.execute(select(Enrollment).where(Enrollment.id == enrollment_id))
+    enrollment = result.scalars().first()
 
     if not enrollment:
         raise HTTPException(
@@ -198,22 +205,23 @@ def update_enrollment(
         enrollment.enrollment_date = enrollment_data.enrollment_date
 
     if enrollment_data.academic_year is not None:
-        # Check if new academic year would create duplicate
-        existing = db.query(Enrollment).filter(
-            Enrollment.student_id == enrollment.student_id,
-            Enrollment.subject_id == enrollment.subject_id,
-            Enrollment.academic_year == enrollment_data.academic_year,
-            Enrollment.id != enrollment_id
-        ).first()
-        if existing:
+        result = await db.execute(
+            select(Enrollment).where(
+                Enrollment.student_id == enrollment.student_id,
+                Enrollment.subject_id == enrollment.subject_id,
+                Enrollment.academic_year == enrollment_data.academic_year,
+                Enrollment.id != enrollment_id
+            )
+        )
+        if result.scalars().first():
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
                 detail=f"Student already enrolled in this subject for academic year {enrollment_data.academic_year}"
             )
         enrollment.academic_year = enrollment_data.academic_year
 
-    db.commit()
-    db.refresh(enrollment)
+    await db.commit()
+    await db.refresh(enrollment)
 
     return EnrollmentResponse(
         id=enrollment.id,
@@ -229,9 +237,9 @@ def update_enrollment(
 
 
 @router.delete("/{enrollment_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_enrollment(
+async def delete_enrollment(
     enrollment_id: int,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_permission(Permission.MANAGE_ENROLLMENTS))
 ):
     """
@@ -240,7 +248,8 @@ def delete_enrollment(
     Requires: MANAGE_ENROLLMENTS permission
     Note: This will cascade delete all related marks for this enrollment.
     """
-    enrollment = db.query(Enrollment).filter(Enrollment.id == enrollment_id).first()
+    result = await db.execute(select(Enrollment).where(Enrollment.id == enrollment_id))
+    enrollment = result.scalars().first()
 
     if not enrollment:
         raise HTTPException(
@@ -248,8 +257,8 @@ def delete_enrollment(
             detail="Enrollment not found"
         )
 
-    db.delete(enrollment)
-    db.commit()
+    await db.delete(enrollment)
+    await db.commit()
 
     return None
 
@@ -259,10 +268,10 @@ def delete_enrollment(
 # ============================================================================
 
 @router.get("/my/enrollments", response_model=List[EnrollmentWithDetails])
-def get_my_enrollments(
+async def get_my_enrollments(
     academic_year: Optional[str] = None,
     status_filter: Optional[EnrollmentStatus] = QueryParam(None, alias="status"),
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_permission(Permission.VIEW_OWN_ENROLLMENTS))
 ):
     """
@@ -270,17 +279,19 @@ def get_my_enrollments(
 
     Requires: VIEW_OWN_ENROLLMENTS permission (Student only)
     """
-    query = db.query(Enrollment).options(
-        joinedload(Enrollment.subject).joinedload(Subject.department)
-    ).filter(Enrollment.student_id == current_user.id)
+    stmt = select(Enrollment).options(
+        selectinload(Enrollment.subject).selectinload(Subject.department)
+    ).where(Enrollment.student_id == current_user.id)
 
     if academic_year:
-        query = query.filter(Enrollment.academic_year == academic_year)
+        stmt = stmt.where(Enrollment.academic_year == academic_year)
 
     if status_filter is not None:
-        query = query.filter(Enrollment.status == status_filter)
+        stmt = stmt.where(Enrollment.status == status_filter)
 
-    enrollments = query.order_by(Enrollment.enrollment_date.desc()).all()
+    stmt = stmt.order_by(Enrollment.enrollment_date.desc())
+    result = await db.execute(stmt)
+    enrollments = result.scalars().unique().all()
 
     results = []
     for enrollment in enrollments:
@@ -294,9 +305,9 @@ def get_my_enrollments(
 # ============================================================================
 
 @router.post("/bulk", response_model=dict, status_code=status.HTTP_201_CREATED)
-def bulk_enroll_students(
+async def bulk_enroll_students(
     enrollments_data: List[EnrollmentCreate],
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_permission(Permission.MANAGE_ENROLLMENTS))
 ):
     """
@@ -315,11 +326,13 @@ def bulk_enroll_students(
     for i, enrollment_data in enumerate(enrollments_data):
         try:
             # Verify student exists
-            student = db.query(User).join(Role).filter(
-                User.id == enrollment_data.student_id,
-                Role.name == "STUDENT"
-            ).first()
-            if not student:
+            result = await db.execute(
+                select(User).join(Role).where(
+                    User.id == enrollment_data.student_id,
+                    Role.name == "STUDENT"
+                )
+            )
+            if not result.scalars().first():
                 errors.append({
                     "index": i,
                     "student_id": enrollment_data.student_id,
@@ -328,10 +341,8 @@ def bulk_enroll_students(
                 continue
 
             # Verify subject exists
-            subject = db.query(Subject).filter(
-                Subject.id == enrollment_data.subject_id
-            ).first()
-            if not subject:
+            result = await db.execute(select(Subject).where(Subject.id == enrollment_data.subject_id))
+            if not result.scalars().first():
                 errors.append({
                     "index": i,
                     "subject_id": enrollment_data.subject_id,
@@ -340,13 +351,14 @@ def bulk_enroll_students(
                 continue
 
             # Check if enrollment already exists
-            existing = db.query(Enrollment).filter(
-                Enrollment.student_id == enrollment_data.student_id,
-                Enrollment.subject_id == enrollment_data.subject_id,
-                Enrollment.academic_year == enrollment_data.academic_year
-            ).first()
-
-            if existing:
+            result = await db.execute(
+                select(Enrollment).where(
+                    Enrollment.student_id == enrollment_data.student_id,
+                    Enrollment.subject_id == enrollment_data.subject_id,
+                    Enrollment.academic_year == enrollment_data.academic_year
+                )
+            )
+            if result.scalars().first():
                 errors.append({
                     "index": i,
                     "student_id": enrollment_data.student_id,
@@ -380,7 +392,7 @@ def bulk_enroll_students(
             })
 
     # Commit all successful enrollments
-    db.commit()
+    await db.commit()
 
     return {
         "message": f"Bulk enrollment completed",
@@ -396,9 +408,9 @@ def bulk_enroll_students(
 # ============================================================================
 
 @router.get("/batches/{subject_id}", response_model=List[str])
-def get_batches_for_subject(
+async def get_batches_for_subject(
     subject_id: int,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
     """
@@ -410,35 +422,35 @@ def get_batches_for_subject(
     import re
 
     # Verify subject exists
-    subject = db.query(Subject).filter(Subject.id == subject_id).first()
-    if not subject:
+    result = await db.execute(select(Subject).where(Subject.id == subject_id))
+    if not result.scalars().first():
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Subject not found"
         )
 
     # Get all enrollments for this subject with student info
-    enrollments = db.query(Enrollment).options(
-        joinedload(Enrollment.student)
-    ).filter(
-        Enrollment.subject_id == subject_id,
-        Enrollment.status == EnrollmentStatus.ACTIVE
-    ).all()
+    result = await db.execute(
+        select(Enrollment).options(
+            selectinload(Enrollment.student)
+        ).where(
+            Enrollment.subject_id == subject_id,
+            Enrollment.status == EnrollmentStatus.ACTIVE
+        )
+    )
+    enrollments = result.scalars().unique().all()
 
     # Extract unique batches from student_id
     batches = set()
     for enrollment in enrollments:
         if enrollment.student and enrollment.student.student_id:
             student_id = enrollment.student.student_id
-            # Try to extract batch pattern like "E/20/123" -> "E20" or "E20/123" -> "E20"
-            # Common formats: E/20/123, E20/123, E.20.123, E-20-123
             match = re.match(r'([A-Z]+)[/.\-]?(\d{2})[/.\-]?\d*', student_id, re.IGNORECASE)
             if match:
                 prefix = match.group(1).upper()
                 year = match.group(2)
                 batches.add(f"{prefix}{year}")
             else:
-                # If no pattern matched, try to extract first part before any number
                 match2 = re.match(r'([A-Z]+\d{2})', student_id, re.IGNORECASE)
                 if match2:
                     batches.add(match2.group(1).upper())

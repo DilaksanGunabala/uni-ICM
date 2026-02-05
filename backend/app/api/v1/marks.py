@@ -1,5 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, status, Query as QueryParam, Request
-from sqlalchemy.orm import Session, joinedload
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
+from sqlalchemy.orm import selectinload
 from typing import List, Optional
 
 from app.database import get_db
@@ -21,10 +23,10 @@ router = APIRouter()
 
 
 @router.post("/", response_model=MarkResponse, status_code=status.HTTP_201_CREATED)
-def create_marks(
+async def create_marks(
     mark_data: MarkCreate,
     request: Request,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_permission(Permission.ENTER_MARKS))
 ):
     """
@@ -36,7 +38,7 @@ def create_marks(
     ip_address = get_client_ip(request)
     user_agent = get_user_agent(request)
 
-    mark = MarkService.submit_marks(
+    mark = await MarkService.submit_marks(
         db=db,
         enrollment_id=mark_data.enrollment_id,
         assessment_id=mark_data.assessment_id,
@@ -48,12 +50,12 @@ def create_marks(
     )
 
     # Load relationships for response
-    db.refresh(mark)
-    return _build_mark_response(db, mark)
+    await db.refresh(mark)
+    return await _build_mark_response(db, mark)
 
 
 @router.get("/", response_model=dict)
-def get_marks(
+async def get_marks(
     student_id: Optional[int] = None,
     subject_id: Optional[int] = None,
     semester: Optional[int] = None,
@@ -63,7 +65,7 @@ def get_marks(
     batch: Optional[str] = None,
     page: int = QueryParam(1, ge=1),
     page_size: int = QueryParam(20, ge=1, le=100),
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
     """
@@ -79,50 +81,47 @@ def get_marks(
     - batch: Filter by student batch (e.g., "E20", "E21"). Matches student_id patterns like "E/20/xxx".
     """
     # Start with base query
-    query = db.query(Mark).options(
-        joinedload(Mark.enrollment).joinedload(Enrollment.student),
-        joinedload(Mark.enrollment).joinedload(Enrollment.subject),
-        joinedload(Mark.assessment),
-        joinedload(Mark.submitter),
-        joinedload(Mark.reviewer)
+    stmt = select(Mark).options(
+        selectinload(Mark.enrollment).selectinload(Enrollment.student),
+        selectinload(Mark.enrollment).selectinload(Enrollment.subject),
+        selectinload(Mark.assessment),
+        selectinload(Mark.submitter),
+        selectinload(Mark.reviewer)
     )
 
     # Apply role-based filtering
     role_name = current_user.role.name
 
     if role_name == "STUDENT":
-        # Students see only their own approved marks
-        query = query.filter(
+        stmt = stmt.where(
             Mark.enrollment.has(Enrollment.student_id == current_user.id),
             Mark.status == MarkStatus.APPROVED
         )
     elif role_name == "LECTURER":
-        # Lecturers see marks they submitted
-        query = query.filter(Mark.submitted_by == current_user.id)
+        stmt = stmt.where(Mark.submitted_by == current_user.id)
     elif role_name == "HOD":
-        # HOD sees all marks in their department
-        query = query.filter(
+        stmt = stmt.where(
             Mark.enrollment.has(
                 Enrollment.subject.has(Subject.department_id == current_user.department_id)
             )
         )
     # SUPER_ADMIN sees all marks (no additional filter)
 
-    # Apply additional filters using .has() to avoid multiple joins
+    # Apply additional filters
     if student_id:
-        query = query.filter(Mark.enrollment.has(Enrollment.student_id == student_id))
+        stmt = stmt.where(Mark.enrollment.has(Enrollment.student_id == student_id))
     if subject_id:
-        query = query.filter(Mark.assessment.has(Assessment.subject_id == subject_id))
+        stmt = stmt.where(Mark.assessment.has(Assessment.subject_id == subject_id))
     if semester:
-        query = query.filter(Mark.enrollment.has(Enrollment.semester == semester))
+        stmt = stmt.where(Mark.enrollment.has(Enrollment.semester == semester))
     if assessment_type:
-        query = query.filter(Mark.assessment.has(Assessment.assessment_type == assessment_type))
+        stmt = stmt.where(Mark.assessment.has(Assessment.assessment_type == assessment_type))
     if status_filter:
-        query = query.filter(Mark.status == status_filter)
+        stmt = stmt.where(Mark.status == status_filter)
     if academic_year:
-        query = query.filter(Mark.enrollment.has(Enrollment.academic_year == academic_year))
+        stmt = stmt.where(Mark.enrollment.has(Enrollment.academic_year == academic_year))
 
-    # Filter by batch (e.g., "E20" matches student_id patterns like "E/20/xxx", "E20/xxx", "E.20.xxx")
+    # Filter by batch
     if batch:
         import re
         match = re.match(r'([A-Z]+)(\d{2})', batch, re.IGNORECASE)
@@ -130,29 +129,31 @@ def get_marks(
             prefix = match.group(1).upper()
             year = match.group(2)
             batch_pattern = f"{prefix}%{year}%"
-            query = query.filter(
+            stmt = stmt.where(
                 Mark.enrollment.has(
                     Enrollment.student.has(User.student_id.ilike(batch_pattern))
                 )
             )
 
     # Order by most recent first
-    query = query.order_by(Mark.submitted_at.desc())
+    stmt = stmt.order_by(Mark.submitted_at.desc())
 
     # Paginate
-    paginated = paginate(query, page, page_size)
+    paginated = await paginate(db, stmt, page, page_size)
 
     # Build response items
-    items = [_build_mark_response(db, mark) for mark in paginated["items"]]
+    items = []
+    for mark in paginated["items"]:
+        items.append(await _build_mark_response(db, mark))
     paginated["items"] = items
 
     return paginated
 
 
 @router.get("/{mark_id}", response_model=MarkResponse)
-def get_mark_by_id(
+async def get_mark_by_id(
     mark_id: int,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
     """
@@ -161,13 +162,16 @@ def get_mark_by_id(
     Access control:
     - Users can only see marks they have permission to view based on their role
     """
-    mark = db.query(Mark).options(
-        joinedload(Mark.enrollment).joinedload(Enrollment.student),
-        joinedload(Mark.enrollment).joinedload(Enrollment.subject),
-        joinedload(Mark.assessment),
-        joinedload(Mark.submitter),
-        joinedload(Mark.reviewer)
-    ).filter(Mark.id == mark_id).first()
+    result = await db.execute(
+        select(Mark).options(
+            selectinload(Mark.enrollment).selectinload(Enrollment.student),
+            selectinload(Mark.enrollment).selectinload(Enrollment.subject),
+            selectinload(Mark.assessment),
+            selectinload(Mark.submitter),
+            selectinload(Mark.reviewer)
+        ).where(Mark.id == mark_id)
+    )
+    mark = result.scalars().first()
 
     if not mark:
         raise HTTPException(
@@ -199,15 +203,15 @@ def get_mark_by_id(
                 detail="Access denied"
             )
 
-    return _build_mark_response(db, mark)
+    return await _build_mark_response(db, mark)
 
 
 @router.put("/{mark_id}", response_model=MarkResponse)
-def update_marks(
+async def update_marks(
     mark_id: int,
     mark_update: MarkUpdate,
     request: Request,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_permission(Permission.EDIT_MARKS))
 ):
     """
@@ -218,7 +222,7 @@ def update_marks(
     ip_address = get_client_ip(request)
     user_agent = get_user_agent(request)
 
-    mark = MarkService.update_marks(
+    mark = await MarkService.update_marks(
         db=db,
         mark_id=mark_id,
         marks_obtained=float(mark_update.marks_obtained),
@@ -228,15 +232,15 @@ def update_marks(
         user_agent=user_agent
     )
 
-    return _build_mark_response(db, mark)
+    return await _build_mark_response(db, mark)
 
 
 @router.put("/{mark_id}/approve", response_model=MarkResponse)
-def approve_marks(
+async def approve_marks(
     mark_id: int,
     approval: MarkApproval,
     request: Request,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_permission(Permission.APPROVE_MARKS))
 ):
     """
@@ -248,7 +252,7 @@ def approve_marks(
     ip_address = get_client_ip(request)
     user_agent = get_user_agent(request)
 
-    mark = MarkService.approve_marks(
+    mark = await MarkService.approve_marks(
         db=db,
         mark_id=mark_id,
         hod=current_user,
@@ -257,15 +261,15 @@ def approve_marks(
         user_agent=user_agent
     )
 
-    return _build_mark_response(db, mark)
+    return await _build_mark_response(db, mark)
 
 
 @router.put("/{mark_id}/reject", response_model=MarkResponse)
-def reject_marks(
+async def reject_marks(
     mark_id: int,
     rejection: MarkApproval,
     request: Request,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_permission(Permission.REJECT_MARKS))
 ):
     """
@@ -283,7 +287,7 @@ def reject_marks(
     ip_address = get_client_ip(request)
     user_agent = get_user_agent(request)
 
-    mark = MarkService.reject_marks(
+    mark = await MarkService.reject_marks(
         db=db,
         mark_id=mark_id,
         hod=current_user,
@@ -292,14 +296,14 @@ def reject_marks(
         user_agent=user_agent
     )
 
-    return _build_mark_response(db, mark)
+    return await _build_mark_response(db, mark)
 
 
 @router.delete("/{mark_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_marks(
+async def delete_marks(
     mark_id: int,
     request: Request,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_permission(Permission.DELETE_MARKS))
 ):
     """
@@ -310,7 +314,7 @@ def delete_marks(
     ip_address = get_client_ip(request)
     user_agent = get_user_agent(request)
 
-    MarkService.delete_marks(
+    await MarkService.delete_marks(
         db=db,
         mark_id=mark_id,
         lecturer=current_user,
@@ -321,7 +325,7 @@ def delete_marks(
     return None
 
 
-def _build_mark_response(db: Session, mark: Mark) -> MarkResponse:
+async def _build_mark_response(db: AsyncSession, mark: Mark) -> MarkResponse:
     """Helper function to build mark response with additional info"""
     enrollment = mark.enrollment
     student = enrollment.student

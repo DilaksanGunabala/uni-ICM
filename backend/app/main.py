@@ -47,7 +47,7 @@ app.include_router(audit_logs.router, prefix="/api/v1/audit-logs", tags=["Audit 
 
 
 @app.get("/", tags=["Root"])
-def root():
+async def root():
     """Root endpoint"""
     return {
         "message": "University In-Course Marks Management System API",
@@ -57,7 +57,7 @@ def root():
 
 
 @app.get("/health", tags=["Health"])
-def health_check():
+async def health_check():
     """Health check endpoint"""
     return {
         "status": "healthy",
@@ -66,7 +66,7 @@ def health_check():
 
 
 @app.get("/api/v1", tags=["API Info"])
-def api_info():
+async def api_info():
     """API version information"""
     return {
         "version": "1.0.0",
@@ -87,9 +87,15 @@ def api_info():
 
 if __name__ == "__main__":
     import uvicorn
+    import multiprocessing
+
+    workers = multiprocessing.cpu_count() * 2 + 1
+
     uvicorn.run(
         "app.main:app",
         host="0.0.0.0",
         port=8000,
-        reload=True
+        workers=workers,
+        log_level="info",
+        access_log=True,
     )

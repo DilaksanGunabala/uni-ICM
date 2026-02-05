@@ -1,4 +1,5 @@
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
 from fastapi import HTTPException, status
 from typing import Optional
 from datetime import datetime
@@ -14,8 +15,8 @@ class MarkService:
     """Service for marks management and workflow"""
 
     @staticmethod
-    def submit_marks(
-        db: Session,
+    async def submit_marks(
+        db: AsyncSession,
         enrollment_id: int,
         assessment_id: int,
         marks_obtained: float,
@@ -44,7 +45,10 @@ class MarkService:
             HTTPException: If validation fails
         """
         # Get assessment to check max marks
-        assessment = db.query(Assessment).filter(Assessment.id == assessment_id).first()
+        result = await db.execute(
+            select(Assessment).where(Assessment.id == assessment_id)
+        )
+        assessment = result.scalars().first()
         if not assessment:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
@@ -59,10 +63,13 @@ class MarkService:
             )
 
         # Check if marks already exist for this enrollment and assessment
-        existing_mark = db.query(Mark).filter(
-            Mark.enrollment_id == enrollment_id,
-            Mark.assessment_id == assessment_id
-        ).first()
+        result = await db.execute(
+            select(Mark).where(
+                Mark.enrollment_id == enrollment_id,
+                Mark.assessment_id == assessment_id
+            )
+        )
+        existing_mark = result.scalars().first()
 
         if existing_mark:
             raise HTTPException(
@@ -81,11 +88,11 @@ class MarkService:
         )
 
         db.add(mark)
-        db.commit()
-        db.refresh(mark)
+        await db.commit()
+        await db.refresh(mark)
 
         # Log audit trail
-        AuditService.log_insert(
+        await AuditService.log_insert(
             db=db,
             table_name="marks",
             record_id=mark.id,
@@ -97,8 +104,8 @@ class MarkService:
         return mark
 
     @staticmethod
-    def update_marks(
-        db: Session,
+    async def update_marks(
+        db: AsyncSession,
         mark_id: int,
         marks_obtained: float,
         lecturer: User,
@@ -124,7 +131,10 @@ class MarkService:
         Raises:
             HTTPException: If mark not found or cannot be edited
         """
-        mark = db.query(Mark).filter(Mark.id == mark_id).first()
+        result = await db.execute(
+            select(Mark).where(Mark.id == mark_id)
+        )
+        mark = result.scalars().first()
 
         if not mark:
             raise HTTPException(
@@ -147,7 +157,10 @@ class MarkService:
             )
 
         # Get assessment to validate marks
-        assessment = db.query(Assessment).filter(Assessment.id == mark.assessment_id).first()
+        result = await db.execute(
+            select(Assessment).where(Assessment.id == mark.assessment_id)
+        )
+        assessment = result.scalars().first()
         if not is_absent and marks_obtained > assessment.max_marks:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -164,11 +177,11 @@ class MarkService:
             mark.is_absent = is_absent
         mark.status = MarkStatus.PENDING  # Reset to pending after edit
 
-        db.commit()
-        db.refresh(mark)
+        await db.commit()
+        await db.refresh(mark)
 
         # Log audit trail
-        AuditService.log_update(
+        await AuditService.log_update(
             db=db,
             table_name="marks",
             record_id=mark.id,
@@ -183,8 +196,8 @@ class MarkService:
         return mark
 
     @staticmethod
-    def approve_marks(
-        db: Session,
+    async def approve_marks(
+        db: AsyncSession,
         mark_id: int,
         hod: User,
         comments: Optional[str] = None,
@@ -208,7 +221,10 @@ class MarkService:
         Raises:
             HTTPException: If mark not found or cannot be approved
         """
-        mark = db.query(Mark).filter(Mark.id == mark_id).first()
+        result = await db.execute(
+            select(Mark).where(Mark.id == mark_id)
+        )
+        mark = result.scalars().first()
 
         if not mark:
             raise HTTPException(
@@ -229,11 +245,11 @@ class MarkService:
         mark.reviewed_at = datetime.utcnow()
         mark.review_comments = comments
 
-        db.commit()
-        db.refresh(mark)
+        await db.commit()
+        await db.refresh(mark)
 
         # Log audit trail
-        AuditService.log_approve(
+        await AuditService.log_approve(
             db=db,
             table_name="marks",
             record_id=mark.id,
@@ -245,8 +261,8 @@ class MarkService:
         return mark
 
     @staticmethod
-    def reject_marks(
-        db: Session,
+    async def reject_marks(
+        db: AsyncSession,
         mark_id: int,
         hod: User,
         comments: str,
@@ -270,7 +286,10 @@ class MarkService:
         Raises:
             HTTPException: If mark not found, comments missing, or cannot be rejected
         """
-        mark = db.query(Mark).filter(Mark.id == mark_id).first()
+        result = await db.execute(
+            select(Mark).where(Mark.id == mark_id)
+        )
+        mark = result.scalars().first()
 
         if not mark:
             raise HTTPException(
@@ -297,11 +316,11 @@ class MarkService:
         mark.reviewed_at = datetime.utcnow()
         mark.review_comments = comments
 
-        db.commit()
-        db.refresh(mark)
+        await db.commit()
+        await db.refresh(mark)
 
         # Log audit trail
-        AuditService.log_reject(
+        await AuditService.log_reject(
             db=db,
             table_name="marks",
             record_id=mark.id,
@@ -314,8 +333,8 @@ class MarkService:
         return mark
 
     @staticmethod
-    def delete_marks(
-        db: Session,
+    async def delete_marks(
+        db: AsyncSession,
         mark_id: int,
         lecturer: User,
         ip_address: Optional[str] = None,
@@ -337,7 +356,10 @@ class MarkService:
         Raises:
             HTTPException: If mark not found or cannot be deleted
         """
-        mark = db.query(Mark).filter(Mark.id == mark_id).first()
+        result = await db.execute(
+            select(Mark).where(Mark.id == mark_id)
+        )
+        mark = result.scalars().first()
 
         if not mark:
             raise HTTPException(
@@ -360,7 +382,7 @@ class MarkService:
             )
 
         # Log audit trail before deletion
-        AuditService.log_delete(
+        await AuditService.log_delete(
             db=db,
             table_name="marks",
             record_id=mark.id,
@@ -370,7 +392,7 @@ class MarkService:
         )
 
         # Delete mark
-        db.delete(mark)
-        db.commit()
+        await db.delete(mark)
+        await db.commit()
 
         return True

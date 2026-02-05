@@ -1,5 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, status, Query as QueryParam
-from sqlalchemy.orm import Session, joinedload
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select, func
+from sqlalchemy.orm import selectinload
 from typing import List, Optional
 
 from app.database import get_db
@@ -17,7 +19,7 @@ router = APIRouter()
 
 
 @router.get("/", response_model=dict)
-def get_users(
+async def get_users(
     search: Optional[str] = None,
     role_id: Optional[int] = None,
     department_id: Optional[int] = None,
@@ -25,7 +27,7 @@ def get_users(
     batch: Optional[str] = None,
     page: int = QueryParam(1, ge=1),
     page_size: int = QueryParam(20, ge=1, le=100),
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_permission(Permission.VIEW_ALL_USERS))
 ):
     """
@@ -36,15 +38,15 @@ def get_users(
     Parameters:
     - batch: Filter students by batch (e.g., "E20", "E21"). Matches student_id patterns like "E/20/xxx" or "E20/xxx".
     """
-    query = db.query(User).options(
-        joinedload(User.role),
-        joinedload(User.department)
+    stmt = select(User).options(
+        selectinload(User.role),
+        selectinload(User.department)
     )
 
     # Apply filters
     if search:
         search_term = f"%{search}%"
-        query = query.filter(
+        stmt = stmt.where(
             (User.email.like(search_term)) |
             (User.first_name.like(search_term)) |
             (User.last_name.like(search_term)) |
@@ -53,13 +55,13 @@ def get_users(
         )
 
     if role_id:
-        query = query.filter(User.role_id == role_id)
+        stmt = stmt.where(User.role_id == role_id)
 
     if department_id:
-        query = query.filter(User.department_id == department_id)
+        stmt = stmt.where(User.department_id == department_id)
 
     if is_active is not None:
-        query = query.filter(User.is_active == is_active)
+        stmt = stmt.where(User.is_active == is_active)
 
     # Filter by batch (e.g., "E20" matches "E/20/xxx", "E20/xxx", "E.20.xxx", "E-20-xxx")
     if batch:
@@ -68,15 +70,14 @@ def get_users(
         if match:
             prefix = match.group(1).upper()
             year = match.group(2)
-            # Match patterns like E/20/%, E20/%, E.20.%, E-20-%
             batch_pattern = f"{prefix}%{year}%"
-            query = query.filter(User.student_id.ilike(batch_pattern))
+            stmt = stmt.where(User.student_id.ilike(batch_pattern))
 
     # Order by most recent first
-    query = query.order_by(User.created_at.desc())
+    stmt = stmt.order_by(User.created_at.desc())
 
     # Paginate
-    paginated = paginate(query, page, page_size)
+    paginated = await paginate(db, stmt, page, page_size)
 
     # Build response
     items = []
@@ -104,8 +105,8 @@ def get_users(
 
 
 @router.get("/stats/counts", response_model=dict)
-def get_user_stats(
-    db: Session = Depends(get_db),
+async def get_user_stats(
+    db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_permission(Permission.VIEW_ALL_USERS))
 ):
     """
@@ -118,19 +119,21 @@ def get_user_stats(
     - total_active: Number of active users
     - by_role: Count of users per role
     """
-    from sqlalchemy import func
-
     # Total users count
-    total_users = db.query(func.count(User.id)).scalar()
+    result = await db.execute(select(func.count(User.id)))
+    total_users = result.scalar()
 
     # Active users count
-    total_active = db.query(func.count(User.id)).filter(User.is_active == True).scalar()
+    result = await db.execute(select(func.count(User.id)).where(User.is_active == True))
+    total_active = result.scalar()
 
     # Count by role
-    role_counts = db.query(
-        Role.name,
-        func.count(User.id).label('count')
-    ).join(User, User.role_id == Role.id).group_by(Role.name).all()
+    result = await db.execute(
+        select(Role.name, func.count(User.id).label('count'))
+        .join(User, User.role_id == Role.id)
+        .group_by(Role.name)
+    )
+    role_counts = result.all()
 
     by_role = {role_name: count for role_name, count in role_counts}
 
@@ -146,9 +149,9 @@ def get_user_stats(
 
 
 @router.get("/{user_id}", response_model=UserWithRole)
-def get_user(
+async def get_user(
     user_id: int,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_permission(Permission.VIEW_ALL_USERS))
 ):
     """
@@ -156,10 +159,13 @@ def get_user(
 
     Requires: VIEW_ALL_USERS permission
     """
-    user = db.query(User).options(
-        joinedload(User.role),
-        joinedload(User.department)
-    ).filter(User.id == user_id).first()
+    result = await db.execute(
+        select(User).options(
+            selectinload(User.role),
+            selectinload(User.department)
+        ).where(User.id == user_id)
+    )
+    user = result.scalars().first()
 
     if not user:
         raise HTTPException(
@@ -186,9 +192,9 @@ def get_user(
 
 
 @router.post("/", response_model=UserWithRole, status_code=status.HTTP_201_CREATED)
-def create_user(
+async def create_user(
     user_data: UserCreate,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_permission(Permission.MANAGE_USERS))
 ):
     """
@@ -197,8 +203,8 @@ def create_user(
     Requires: MANAGE_USERS permission
     """
     # Check if email already exists
-    existing_user = db.query(User).filter(User.email == user_data.email).first()
-    if existing_user:
+    result = await db.execute(select(User).where(User.email == user_data.email))
+    if result.scalars().first():
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="Email already registered"
@@ -206,8 +212,8 @@ def create_user(
 
     # Check if employee_id already exists (if provided)
     if user_data.employee_id:
-        existing = db.query(User).filter(User.employee_id == user_data.employee_id).first()
-        if existing:
+        result = await db.execute(select(User).where(User.employee_id == user_data.employee_id))
+        if result.scalars().first():
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
                 detail="Employee ID already exists"
@@ -215,16 +221,16 @@ def create_user(
 
     # Check if student_id already exists (if provided)
     if user_data.student_id:
-        existing = db.query(User).filter(User.student_id == user_data.student_id).first()
-        if existing:
+        result = await db.execute(select(User).where(User.student_id == user_data.student_id))
+        if result.scalars().first():
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
                 detail="Student ID already exists"
             )
 
     # Verify role exists
-    role = db.query(Role).filter(Role.id == user_data.role_id).first()
-    if not role:
+    result = await db.execute(select(Role).where(Role.id == user_data.role_id))
+    if not result.scalars().first():
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Role not found"
@@ -232,8 +238,8 @@ def create_user(
 
     # Verify department exists (if provided)
     if user_data.department_id:
-        department = db.query(Department).filter(Department.id == user_data.department_id).first()
-        if not department:
+        result = await db.execute(select(Department).where(Department.id == user_data.department_id))
+        if not result.scalars().first():
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Department not found"
@@ -256,8 +262,17 @@ def create_user(
     )
 
     db.add(new_user)
-    db.commit()
-    db.refresh(new_user)
+    await db.commit()
+    await db.refresh(new_user)
+
+    # Reload with relationships
+    result = await db.execute(
+        select(User).options(
+            selectinload(User.role),
+            selectinload(User.department)
+        ).where(User.id == new_user.id)
+    )
+    new_user = result.scalars().first()
 
     return UserWithRole(
         id=new_user.id,
@@ -278,10 +293,10 @@ def create_user(
 
 
 @router.put("/{user_id}", response_model=UserWithRole)
-def update_user(
+async def update_user(
     user_id: int,
     user_data: UserUpdate,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_permission(Permission.MANAGE_USERS))
 ):
     """
@@ -289,7 +304,8 @@ def update_user(
 
     Requires: MANAGE_USERS permission
     """
-    user = db.query(User).filter(User.id == user_id).first()
+    result = await db.execute(select(User).where(User.id == user_id))
+    user = result.scalars().first()
 
     if not user:
         raise HTTPException(
@@ -299,12 +315,10 @@ def update_user(
 
     # Update fields if provided
     if user_data.email is not None:
-        # Check if email is already taken by another user
-        existing = db.query(User).filter(
-            User.email == user_data.email,
-            User.id != user_id
-        ).first()
-        if existing:
+        result = await db.execute(
+            select(User).where(User.email == user_data.email, User.id != user_id)
+        )
+        if result.scalars().first():
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
                 detail="Email already registered"
@@ -318,11 +332,10 @@ def update_user(
         user.last_name = user_data.last_name
 
     if user_data.employee_id is not None:
-        existing = db.query(User).filter(
-            User.employee_id == user_data.employee_id,
-            User.id != user_id
-        ).first()
-        if existing:
+        result = await db.execute(
+            select(User).where(User.employee_id == user_data.employee_id, User.id != user_id)
+        )
+        if result.scalars().first():
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
                 detail="Employee ID already exists"
@@ -330,11 +343,10 @@ def update_user(
         user.employee_id = user_data.employee_id
 
     if user_data.student_id is not None:
-        existing = db.query(User).filter(
-            User.student_id == user_data.student_id,
-            User.id != user_id
-        ).first()
-        if existing:
+        result = await db.execute(
+            select(User).where(User.student_id == user_data.student_id, User.id != user_id)
+        )
+        if result.scalars().first():
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
                 detail="Student ID already exists"
@@ -342,8 +354,8 @@ def update_user(
         user.student_id = user_data.student_id
 
     if user_data.role_id is not None:
-        role = db.query(Role).filter(Role.id == user_data.role_id).first()
-        if not role:
+        result = await db.execute(select(Role).where(Role.id == user_data.role_id))
+        if not result.scalars().first():
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Role not found"
@@ -351,8 +363,8 @@ def update_user(
         user.role_id = user_data.role_id
 
     if user_data.department_id is not None:
-        department = db.query(Department).filter(Department.id == user_data.department_id).first()
-        if not department:
+        result = await db.execute(select(Department).where(Department.id == user_data.department_id))
+        if not result.scalars().first():
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Department not found"
@@ -365,8 +377,17 @@ def update_user(
     if user_data.password is not None:
         user.password_hash = get_password_hash(user_data.password)
 
-    db.commit()
-    db.refresh(user)
+    await db.commit()
+    await db.refresh(user)
+
+    # Reload with relationships
+    result = await db.execute(
+        select(User).options(
+            selectinload(User.role),
+            selectinload(User.department)
+        ).where(User.id == user.id)
+    )
+    user = result.scalars().first()
 
     return UserWithRole(
         id=user.id,
@@ -387,9 +408,9 @@ def update_user(
 
 
 @router.delete("/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_user(
+async def delete_user(
     user_id: int,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_permission(Permission.MANAGE_USERS))
 ):
     """
@@ -397,7 +418,8 @@ def delete_user(
 
     Requires: MANAGE_USERS permission
     """
-    user = db.query(User).filter(User.id == user_id).first()
+    result = await db.execute(select(User).where(User.id == user_id))
+    user = result.scalars().first()
 
     if not user:
         raise HTTPException(
@@ -412,7 +434,7 @@ def delete_user(
             detail="Cannot delete your own account"
         )
 
-    db.delete(user)
-    db.commit()
+    await db.delete(user)
+    await db.commit()
 
     return None

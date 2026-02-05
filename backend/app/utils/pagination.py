@@ -1,6 +1,8 @@
 from typing import TypeVar, Generic, List, Optional
 from pydantic import BaseModel
-from sqlalchemy.orm import Query
+from sqlalchemy import select, func
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.sql import Select
 from app.config import settings
 
 T = TypeVar('T')
@@ -20,16 +22,18 @@ class PaginatedResponse(BaseModel, Generic[T]):
         arbitrary_types_allowed = True
 
 
-def paginate(
-    query: Query,
+async def paginate(
+    db: AsyncSession,
+    stmt: Select,
     page: int = 1,
     page_size: Optional[int] = None
 ) -> dict:
     """
-    Paginate a SQLAlchemy query.
+    Paginate an async SQLAlchemy select statement.
 
     Args:
-        query: SQLAlchemy query to paginate
+        db: Async database session
+        stmt: SQLAlchemy Select statement to paginate
         page: Page number (1-indexed)
         page_size: Number of items per page (defaults to settings.DEFAULT_PAGE_SIZE)
 
@@ -49,7 +53,8 @@ def paginate(
         page = 1
 
     # Get total count
-    total = query.count()
+    count_stmt = select(func.count()).select_from(stmt.subquery())
+    total = (await db.execute(count_stmt)).scalar()
 
     # Calculate total pages
     total_pages = (total + page_size - 1) // page_size if total > 0 else 1
@@ -62,7 +67,8 @@ def paginate(
     offset = (page - 1) * page_size
 
     # Get paginated items
-    items = query.offset(offset).limit(page_size).all()
+    result = await db.execute(stmt.offset(offset).limit(page_size))
+    items = result.scalars().unique().all()
 
     return {
         "items": items,

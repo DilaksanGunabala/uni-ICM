@@ -25,6 +25,9 @@ import {
   ChevronRight,
   Activity,
   FileText,
+  UserCheck,
+  ShieldCheck,
+  AlertCircle,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import api, { BackendAuditLog, DashboardStats } from "@/lib/api";
@@ -126,11 +129,17 @@ export function SuperAdminDashboard() {
         // Set default stats if API fails
         setStats({
           totalUsers: 0,
+          totalActive: 0,
           totalStudents: 0,
           totalLecturers: 0,
           totalHODs: 0,
+          totalSuperAdmins: 0,
           totalSubjects: 0,
           totalDepartments: 0,
+          totalEnrollments: 0,
+          pendingMarks: 0,
+          approvedMarks: 0,
+          rejectedMarks: 0,
         });
       }
 
@@ -311,33 +320,75 @@ export function SuperAdminDashboard() {
         />
       </div>
 
-      {/* Quick Stats Row */}
-      <div className="grid gap-4 md:grid-cols-3 mb-8">
-        <div className="bg-card rounded-lg border p-4">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm text-muted-foreground">Total Users</p>
-              <p className="text-2xl font-bold">{stats?.totalUsers.toLocaleString() || '0'}</p>
+      {/* Marks Overview + Quick Stats */}
+      <div className="grid gap-4 md:grid-cols-2 mb-8">
+        {/* Marks Overview */}
+        <div className="bg-card rounded-lg border p-5">
+          <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider mb-4">Marks Overview</h3>
+          <div className="grid grid-cols-3 gap-3">
+            <div className="rounded-lg border border-yellow-500/20 bg-yellow-500/5 p-3">
+              <FileText className="h-5 w-5 text-yellow-600 mb-2" />
+              <p className="text-2xl font-bold text-yellow-700">{stats?.pendingMarks.toLocaleString() || '0'}</p>
+              <p className="text-xs font-medium text-yellow-600 mt-1">Pending</p>
             </div>
-            <Users className="h-8 w-8 text-muted-foreground opacity-50" />
+            <div className="rounded-lg border border-green-500/20 bg-green-500/5 p-3">
+              <ShieldCheck className="h-5 w-5 text-green-600 mb-2" />
+              <p className="text-2xl font-bold text-green-700">{stats?.approvedMarks.toLocaleString() || '0'}</p>
+              <p className="text-xs font-medium text-green-600 mt-1">Approved</p>
+            </div>
+            <div className="rounded-lg border border-red-500/20 bg-red-500/5 p-3">
+              <AlertCircle className="h-5 w-5 text-red-600 mb-2" />
+              <p className="text-2xl font-bold text-red-700">{stats?.rejectedMarks.toLocaleString() || '0'}</p>
+              <p className="text-xs font-medium text-red-600 mt-1">Rejected</p>
+            </div>
+          </div>
+          <div className="mt-3 pt-3 border-t flex items-center justify-between text-sm text-muted-foreground">
+            <span>Total marks entries</span>
+            <span className="font-semibold">
+              {((stats?.pendingMarks || 0) + (stats?.approvedMarks || 0) + (stats?.rejectedMarks || 0)).toLocaleString()}
+            </span>
           </div>
         </div>
-        <div className="bg-card rounded-lg border p-4">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm text-muted-foreground">HODs</p>
-              <p className="text-2xl font-bold">{stats?.totalHODs || '0'}</p>
+
+        {/* Quick Stats */}
+        <div className="bg-card rounded-lg border p-5">
+          <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider mb-4">Quick Stats</h3>
+          <div className="space-y-3">
+            <div className="flex items-center justify-between p-2 rounded-lg hover:bg-muted/50">
+              <div className="flex items-center gap-3">
+                <Users className="h-5 w-5 text-muted-foreground" />
+                <span className="text-sm">Total Users</span>
+              </div>
+              <span className="text-sm font-bold">{stats?.totalUsers.toLocaleString() || '0'}</span>
             </div>
-            <GraduationCap className="h-8 w-8 text-muted-foreground opacity-50" />
-          </div>
-        </div>
-        <div className="bg-card rounded-lg border p-4">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm text-muted-foreground">System Status</p>
-              <p className="text-2xl font-bold text-success">Online</p>
+            <div className="flex items-center justify-between p-2 rounded-lg hover:bg-muted/50">
+              <div className="flex items-center gap-3">
+                <UserCheck className="h-5 w-5 text-muted-foreground" />
+                <span className="text-sm">Active Users</span>
+              </div>
+              <span className="text-sm font-bold">{stats?.totalActive.toLocaleString() || '0'}</span>
             </div>
-            <div className="h-3 w-3 rounded-full bg-success animate-pulse" />
+            <div className="flex items-center justify-between p-2 rounded-lg hover:bg-muted/50">
+              <div className="flex items-center gap-3">
+                <GraduationCap className="h-5 w-5 text-muted-foreground" />
+                <span className="text-sm">HODs</span>
+              </div>
+              <span className="text-sm font-bold">{stats?.totalHODs || '0'}</span>
+            </div>
+            <div className="flex items-center justify-between p-2 rounded-lg hover:bg-muted/50">
+              <div className="flex items-center gap-3">
+                <UserCheck className="h-5 w-5 text-muted-foreground" />
+                <span className="text-sm">Enrollments</span>
+              </div>
+              <span className="text-sm font-bold">{stats?.totalEnrollments.toLocaleString() || '0'}</span>
+            </div>
+            <div className="flex items-center justify-between p-2 rounded-lg hover:bg-muted/50">
+              <div className="flex items-center gap-3">
+                <div className="h-3 w-3 rounded-full bg-success animate-pulse ml-1 mr-1" />
+                <span className="text-sm">System Status</span>
+              </div>
+              <span className="text-sm font-bold text-success">Online</span>
+            </div>
           </div>
         </div>
       </div>

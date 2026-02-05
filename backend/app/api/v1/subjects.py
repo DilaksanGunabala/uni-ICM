@@ -1,5 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, status, Query as QueryParam
-from sqlalchemy.orm import Session, joinedload
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
+from sqlalchemy.orm import selectinload
 from typing import Optional, List
 from datetime import datetime
 
@@ -24,7 +26,7 @@ router = APIRouter()
 
 
 @router.get("/", response_model=dict)
-def get_subjects(
+async def get_subjects(
     search: Optional[str] = None,
     department_id: Optional[int] = None,
     semester: Optional[int] = None,
@@ -32,7 +34,7 @@ def get_subjects(
     is_active: Optional[bool] = None,
     page: int = QueryParam(1, ge=1),
     page_size: int = QueryParam(20, ge=1, le=100),
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
     """
@@ -40,35 +42,33 @@ def get_subjects(
 
     Accessible to all authenticated users.
     """
-    query = db.query(Subject).options(
-        joinedload(Subject.department),
-        joinedload(Subject.coordinator)
+    stmt = select(Subject).options(
+        selectinload(Subject.department),
+        selectinload(Subject.coordinator)
     )
 
     # Apply filters
     if search:
         search_term = f"%{search}%"
-        query = query.filter(
+        stmt = stmt.where(
             (Subject.code.like(search_term)) |
             (Subject.name.like(search_term))
         )
 
     if department_id is not None:
-        query = query.filter(Subject.department_id == department_id)
+        stmt = stmt.where(Subject.department_id == department_id)
 
     if semester is not None:
-        query = query.filter(Subject.semester == semester)
-
-    # Note: academic_year is on SubjectAssignment, not Subject
+        stmt = stmt.where(Subject.semester == semester)
 
     if is_active is not None:
-        query = query.filter(Subject.is_active == is_active)
+        stmt = stmt.where(Subject.is_active == is_active)
 
     # Order by code
-    query = query.order_by(Subject.code)
+    stmt = stmt.order_by(Subject.code)
 
     # Paginate
-    paginated = paginate(query, page, page_size)
+    paginated = await paginate(db, stmt, page, page_size)
 
     # Build response
     items = []
@@ -95,9 +95,9 @@ def get_subjects(
 
 
 @router.get("/{subject_id}", response_model=SubjectWithDetails)
-def get_subject(
+async def get_subject(
     subject_id: int,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
     """
@@ -105,10 +105,13 @@ def get_subject(
 
     Accessible to all authenticated users.
     """
-    subject = db.query(Subject).options(
-        joinedload(Subject.department),
-        joinedload(Subject.coordinator)
-    ).filter(Subject.id == subject_id).first()
+    result = await db.execute(
+        select(Subject).options(
+            selectinload(Subject.department),
+            selectinload(Subject.coordinator)
+        ).where(Subject.id == subject_id)
+    )
+    subject = result.scalars().first()
 
     if not subject:
         raise HTTPException(
@@ -134,9 +137,9 @@ def get_subject(
 
 
 @router.post("/", response_model=SubjectResponse, status_code=status.HTTP_201_CREATED)
-def create_subject(
+async def create_subject(
     subject_data: SubjectCreate,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_permission(Permission.MANAGE_SUBJECTS))
 ):
     """
@@ -145,20 +148,17 @@ def create_subject(
     Requires: MANAGE_SUBJECTS permission
     """
     # Check if code already exists
-    existing = db.query(Subject).filter(Subject.code == subject_data.code).first()
-    if existing:
+    result = await db.execute(select(Subject).where(Subject.code == subject_data.code))
+    if result.scalars().first():
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail=f"Subject code '{subject_data.code}' already exists"
         )
 
     # Verify department exists (only if department_id is provided)
-    # For general subjects (semester 1-3), department_id can be null
     if subject_data.department_id is not None:
-        department = db.query(Department).filter(
-            Department.id == subject_data.department_id
-        ).first()
-        if not department:
+        result = await db.execute(select(Department).where(Department.id == subject_data.department_id))
+        if not result.scalars().first():
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Department not found"
@@ -166,10 +166,8 @@ def create_subject(
 
     # Verify coordinator exists (only if coordinator_id is provided)
     if subject_data.coordinator_id is not None:
-        coordinator = db.query(User).filter(
-            User.id == subject_data.coordinator_id
-        ).first()
-        if not coordinator:
+        result = await db.execute(select(User).where(User.id == subject_data.coordinator_id))
+        if not result.scalars().first():
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Coordinator not found"
@@ -187,8 +185,8 @@ def create_subject(
     )
 
     db.add(new_subject)
-    db.commit()
-    db.refresh(new_subject)
+    await db.commit()
+    await db.refresh(new_subject)
 
     return SubjectResponse(
         id=new_subject.id,
@@ -205,10 +203,10 @@ def create_subject(
 
 
 @router.put("/{subject_id}", response_model=SubjectResponse)
-def update_subject(
+async def update_subject(
     subject_id: int,
     subject_data: SubjectUpdate,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_permission(Permission.MANAGE_SUBJECTS))
 ):
     """
@@ -216,7 +214,8 @@ def update_subject(
 
     Requires: MANAGE_SUBJECTS permission
     """
-    subject = db.query(Subject).filter(Subject.id == subject_id).first()
+    result = await db.execute(select(Subject).where(Subject.id == subject_id))
+    subject = result.scalars().first()
 
     if not subject:
         raise HTTPException(
@@ -226,12 +225,10 @@ def update_subject(
 
     # Update fields if provided
     if subject_data.code is not None:
-        # Check if code is already taken
-        existing = db.query(Subject).filter(
-            Subject.code == subject_data.code,
-            Subject.id != subject_id
-        ).first()
-        if existing:
+        result = await db.execute(
+            select(Subject).where(Subject.code == subject_data.code, Subject.id != subject_id)
+        )
+        if result.scalars().first():
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
                 detail=f"Subject code '{subject_data.code}' already exists"
@@ -242,35 +239,25 @@ def update_subject(
         subject.name = subject_data.name
 
     # Handle department_id update
-    # For general subjects (semester 1-3), department_id can be null
-    # Check if department_id was explicitly included in the request
     if 'department_id' in subject_data.model_fields_set:
         if subject_data.department_id is not None:
-            # Verify department exists when a department ID is specified
-            department = db.query(Department).filter(
-                Department.id == subject_data.department_id
-            ).first()
-            if not department:
+            result = await db.execute(select(Department).where(Department.id == subject_data.department_id))
+            if not result.scalars().first():
                 raise HTTPException(
                     status_code=status.HTTP_404_NOT_FOUND,
                     detail="Department not found"
                 )
-        # Update department_id (can be None for general subjects)
         subject.department_id = subject_data.department_id
 
     # Handle coordinator_id update
     if 'coordinator_id' in subject_data.model_fields_set:
         if subject_data.coordinator_id is not None:
-            # Verify coordinator exists when a coordinator ID is specified
-            coordinator = db.query(User).filter(
-                User.id == subject_data.coordinator_id
-            ).first()
-            if not coordinator:
+            result = await db.execute(select(User).where(User.id == subject_data.coordinator_id))
+            if not result.scalars().first():
                 raise HTTPException(
                     status_code=status.HTTP_404_NOT_FOUND,
                     detail="Coordinator not found"
                 )
-        # Update coordinator_id (can be None)
         subject.coordinator_id = subject_data.coordinator_id
 
     if subject_data.semester is not None:
@@ -282,8 +269,8 @@ def update_subject(
     if subject_data.is_active is not None:
         subject.is_active = subject_data.is_active
 
-    db.commit()
-    db.refresh(subject)
+    await db.commit()
+    await db.refresh(subject)
 
     return SubjectResponse(
         id=subject.id,
@@ -300,9 +287,9 @@ def update_subject(
 
 
 @router.delete("/{subject_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_subject(
+async def delete_subject(
     subject_id: int,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_permission(Permission.MANAGE_SUBJECTS))
 ):
     """
@@ -311,7 +298,8 @@ def delete_subject(
     Requires: MANAGE_SUBJECTS permission
     Note: This will cascade delete all related enrollments, assessments, marks, etc.
     """
-    subject = db.query(Subject).filter(Subject.id == subject_id).first()
+    result = await db.execute(select(Subject).where(Subject.id == subject_id))
+    subject = result.scalars().first()
 
     if not subject:
         raise HTTPException(
@@ -319,8 +307,8 @@ def delete_subject(
             detail="Subject not found"
         )
 
-    db.delete(subject)
-    db.commit()
+    await db.delete(subject)
+    await db.commit()
 
     return None
 
@@ -330,10 +318,10 @@ def delete_subject(
 # ============================================================================
 
 @router.get("/{subject_id}/lecturers", response_model=List[LecturerAssignmentResponse])
-def get_subject_lecturers(
+async def get_subject_lecturers(
     subject_id: int,
     academic_year: Optional[str] = None,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
     """
@@ -342,22 +330,24 @@ def get_subject_lecturers(
     Accessible to all authenticated users.
     Optionally filter by academic year.
     """
-    subject = db.query(Subject).filter(Subject.id == subject_id).first()
-    if not subject:
+    result = await db.execute(select(Subject).where(Subject.id == subject_id))
+    if not result.scalars().first():
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Subject not found"
         )
 
-    query = db.query(SubjectAssignment).options(
-        joinedload(SubjectAssignment.lecturer),
-        joinedload(SubjectAssignment.subject)
-    ).filter(SubjectAssignment.subject_id == subject_id)
+    stmt = select(SubjectAssignment).options(
+        selectinload(SubjectAssignment.lecturer),
+        selectinload(SubjectAssignment.subject)
+    ).where(SubjectAssignment.subject_id == subject_id)
 
     if academic_year:
-        query = query.filter(SubjectAssignment.academic_year == academic_year)
+        stmt = stmt.where(SubjectAssignment.academic_year == academic_year)
 
-    assignments = query.order_by(SubjectAssignment.academic_year.desc()).all()
+    stmt = stmt.order_by(SubjectAssignment.academic_year.desc())
+    result = await db.execute(stmt)
+    assignments = result.scalars().unique().all()
 
     results = []
     for assignment in assignments:
@@ -381,10 +371,10 @@ def get_subject_lecturers(
     response_model=LecturerAssignmentResponse,
     status_code=status.HTTP_201_CREATED
 )
-def assign_lecturer_to_subject(
+async def assign_lecturer_to_subject(
     subject_id: int,
     assignment_data: LecturerAssignmentCreate,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_permission(Permission.MANAGE_SUBJECTS))
 ):
     """
@@ -393,8 +383,8 @@ def assign_lecturer_to_subject(
     Requires: MANAGE_SUBJECTS permission
     """
     # Verify subject exists
-    subject = db.query(Subject).filter(Subject.id == subject_id).first()
-    if not subject:
+    result = await db.execute(select(Subject).where(Subject.id == subject_id))
+    if not result.scalars().first():
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Subject not found"
@@ -402,24 +392,27 @@ def assign_lecturer_to_subject(
 
     # Verify lecturer exists and is a lecturer
     from app.models.role import Role
-    lecturer = db.query(User).join(Role).filter(
-        User.id == assignment_data.lecturer_id,
-        Role.name == "LECTURER"
-    ).first()
-    if not lecturer:
+    result = await db.execute(
+        select(User).join(Role).where(
+            User.id == assignment_data.lecturer_id,
+            Role.name == "LECTURER"
+        )
+    )
+    if not result.scalars().first():
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Lecturer not found or user is not a lecturer"
         )
 
     # Check if assignment already exists
-    existing = db.query(SubjectAssignment).filter(
-        SubjectAssignment.subject_id == subject_id,
-        SubjectAssignment.lecturer_id == assignment_data.lecturer_id,
-        SubjectAssignment.academic_year == assignment_data.academic_year
-    ).first()
-
-    if existing:
+    result = await db.execute(
+        select(SubjectAssignment).where(
+            SubjectAssignment.subject_id == subject_id,
+            SubjectAssignment.lecturer_id == assignment_data.lecturer_id,
+            SubjectAssignment.academic_year == assignment_data.academic_year
+        )
+    )
+    if result.scalars().first():
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail=f"Lecturer already assigned to this subject for academic year {assignment_data.academic_year}"
@@ -433,14 +426,17 @@ def assign_lecturer_to_subject(
     )
 
     db.add(new_assignment)
-    db.commit()
-    db.refresh(new_assignment)
+    await db.commit()
+    await db.refresh(new_assignment)
 
     # Reload with relationships
-    assignment = db.query(SubjectAssignment).options(
-        joinedload(SubjectAssignment.lecturer),
-        joinedload(SubjectAssignment.subject)
-    ).filter(SubjectAssignment.id == new_assignment.id).first()
+    result = await db.execute(
+        select(SubjectAssignment).options(
+            selectinload(SubjectAssignment.lecturer),
+            selectinload(SubjectAssignment.subject)
+        ).where(SubjectAssignment.id == new_assignment.id)
+    )
+    assignment = result.scalars().first()
 
     return LecturerAssignmentResponse(
         id=assignment.id,
@@ -456,10 +452,10 @@ def assign_lecturer_to_subject(
 
 
 @router.delete("/{subject_id}/lecturers/{assignment_id}", status_code=status.HTTP_204_NO_CONTENT)
-def remove_lecturer_assignment(
+async def remove_lecturer_assignment(
     subject_id: int,
     assignment_id: int,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_permission(Permission.MANAGE_SUBJECTS))
 ):
     """
@@ -467,10 +463,13 @@ def remove_lecturer_assignment(
 
     Requires: MANAGE_SUBJECTS permission
     """
-    assignment = db.query(SubjectAssignment).filter(
-        SubjectAssignment.id == assignment_id,
-        SubjectAssignment.subject_id == subject_id
-    ).first()
+    result = await db.execute(
+        select(SubjectAssignment).where(
+            SubjectAssignment.id == assignment_id,
+            SubjectAssignment.subject_id == subject_id
+        )
+    )
+    assignment = result.scalars().first()
 
     if not assignment:
         raise HTTPException(
@@ -478,8 +477,8 @@ def remove_lecturer_assignment(
             detail="Lecturer assignment not found"
         )
 
-    db.delete(assignment)
-    db.commit()
+    await db.delete(assignment)
+    await db.commit()
 
     return None
 
@@ -489,9 +488,9 @@ def remove_lecturer_assignment(
 # ============================================================================
 
 @router.get("/my/assigned", response_model=List[SubjectWithDetails])
-def get_my_assigned_subjects(
+async def get_my_assigned_subjects(
     academic_year: Optional[str] = None,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_permission(Permission.VIEW_OWN_SUBJECTS))
 ):
     """
@@ -499,17 +498,19 @@ def get_my_assigned_subjects(
 
     Requires: VIEW_OWN_SUBJECTS permission (Lecturer only)
     """
-    query = db.query(Subject).join(SubjectAssignment).options(
-        joinedload(Subject.department),
-        joinedload(Subject.coordinator)
-    ).filter(
+    stmt = select(Subject).join(SubjectAssignment).options(
+        selectinload(Subject.department),
+        selectinload(Subject.coordinator)
+    ).where(
         SubjectAssignment.lecturer_id == current_user.id
     )
 
     if academic_year:
-        query = query.filter(SubjectAssignment.academic_year == academic_year)
+        stmt = stmt.where(SubjectAssignment.academic_year == academic_year)
 
-    subjects = query.order_by(Subject.code).all()
+    stmt = stmt.order_by(Subject.code)
+    result = await db.execute(stmt)
+    subjects = result.scalars().unique().all()
 
     results = []
     for subject in subjects:

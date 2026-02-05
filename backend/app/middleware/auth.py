@@ -1,7 +1,9 @@
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from jose import JWTError
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
+from sqlalchemy.orm import selectinload
 from typing import Optional
 
 from app.core.security import decode_token
@@ -15,7 +17,7 @@ security = HTTPBearer()
 
 async def get_current_user(
     credentials: HTTPAuthorizationCredentials = Depends(security),
-    db: Session = Depends(get_db)
+    db: AsyncSession = Depends(get_db)
 ) -> User:
     """
     Dependency to get the current authenticated user from JWT token.
@@ -49,8 +51,13 @@ async def get_current_user(
     except JWTError:
         raise credentials_exception
 
-    # Fetch user from database
-    user = db.query(User).filter(User.id == user_id, User.is_active == True).first()
+    # Fetch user from database with role eagerly loaded (needed by RBAC middleware)
+    result = await db.execute(
+        select(User)
+        .options(selectinload(User.role))
+        .where(User.id == user_id, User.is_active == True)
+    )
+    user = result.scalars().first()
 
     if user is None:
         raise credentials_exception
@@ -81,9 +88,9 @@ async def get_current_active_user(
     return current_user
 
 
-def get_optional_user(
+async def get_optional_user(
     credentials: Optional[HTTPAuthorizationCredentials] = Depends(security),
-    db: Session = Depends(get_db)
+    db: AsyncSession = Depends(get_db)
 ) -> Optional[User]:
     """
     Dependency to get the current user if token is provided, otherwise None.
@@ -107,7 +114,12 @@ def get_optional_user(
         if user_id is None:
             return None
 
-        user = db.query(User).filter(User.id == user_id, User.is_active == True).first()
+        result = await db.execute(
+            select(User)
+            .options(selectinload(User.role))
+            .where(User.id == user_id, User.is_active == True)
+        )
+        user = result.scalars().first()
         return user
 
     except JWTError:
