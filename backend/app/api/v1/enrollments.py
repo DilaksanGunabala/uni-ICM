@@ -11,7 +11,7 @@ from app.middleware.rbac import require_permission
 from app.models.user import User
 from app.models.subject import Subject
 from app.models.enrollment import Enrollment
-from app.core.constants import EnrollmentStatus
+from app.core.constants import EnrollmentStatus, SemesterType
 from app.schemas.enrollment import (
     EnrollmentCreate,
     EnrollmentUpdate,
@@ -120,7 +120,8 @@ async def create_enrollment(
             Role.name == "STUDENT"
         )
     )
-    if not result.scalars().first():
+    student = result.scalars().first()
+    if not student:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Student not found or user is not a student"
@@ -128,11 +129,20 @@ async def create_enrollment(
 
     # Verify subject exists
     result = await db.execute(select(Subject).where(Subject.id == enrollment_data.subject_id))
-    if not result.scalars().first():
+    subject = result.scalars().first()
+    if not subject:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Subject not found"
         )
+
+    # Enforce department match for SPECIAL subjects
+    if subject.semester_type == SemesterType.SPECIAL:
+        if student.department_id != subject.department_id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Department mismatch: student cannot enroll in this department-specific subject"
+            )
 
     # Check if enrollment already exists
     result = await db.execute(
@@ -332,7 +342,8 @@ async def bulk_enroll_students(
                     Role.name == "STUDENT"
                 )
             )
-            if not result.scalars().first():
+            student = result.scalars().first()
+            if not student:
                 errors.append({
                     "index": i,
                     "student_id": enrollment_data.student_id,
@@ -342,13 +353,25 @@ async def bulk_enroll_students(
 
             # Verify subject exists
             result = await db.execute(select(Subject).where(Subject.id == enrollment_data.subject_id))
-            if not result.scalars().first():
+            subject = result.scalars().first()
+            if not subject:
                 errors.append({
                     "index": i,
                     "subject_id": enrollment_data.subject_id,
                     "error": "Subject not found"
                 })
                 continue
+
+            # Enforce department match for SPECIAL subjects
+            if subject.semester_type == SemesterType.SPECIAL:
+                if student.department_id != subject.department_id:
+                    errors.append({
+                        "index": i,
+                        "student_id": enrollment_data.student_id,
+                        "subject_id": enrollment_data.subject_id,
+                        "error": "Department mismatch: student cannot enroll in this department-specific subject"
+                    })
+                    continue
 
             # Check if enrollment already exists
             result = await db.execute(

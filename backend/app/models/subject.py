@@ -1,7 +1,8 @@
-from sqlalchemy import Column, Integer, String, Boolean, TIMESTAMP, ForeignKey
+from sqlalchemy import Column, Integer, String, Boolean, TIMESTAMP, ForeignKey, Enum as SAEnum
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from app.database import Base
+from app.core.constants import SemesterType
 
 
 class Subject(Base):
@@ -12,11 +13,13 @@ class Subject(Base):
     id = Column(Integer, primary_key=True, index=True, autoincrement=True)
     code = Column(String(20), unique=True, nullable=False, index=True)
     name = Column(String(255), nullable=False)
-    # department_id is nullable for general subjects (semester 1-3)
+    # department_id: NULL for GENERAL and GES subjects, REQUIRED for SPECIAL subjects
     department_id = Column(Integer, ForeignKey("departments.id", ondelete="SET NULL"), nullable=True, index=True)
     # Course coordinator (lecturer responsible for this subject)
     coordinator_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
-    semester = Column(Integer, nullable=False, index=True)
+    semester_type = Column(SAEnum(SemesterType), nullable=False, index=True)
+    # semester: NULL for GES subjects, 1-3 for GENERAL, 4-8 for SPECIAL
+    semester = Column(Integer, nullable=True, index=True)
     credits = Column(Integer, nullable=False)
     is_active = Column(Boolean, default=True, index=True)
     created_at = Column(TIMESTAMP, server_default=func.current_timestamp())

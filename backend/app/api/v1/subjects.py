@@ -20,6 +20,7 @@ from app.schemas.subject import (
     LecturerAssignmentResponse
 )
 from app.core.permissions import Permission
+from app.core.constants import SemesterType
 from app.utils.pagination import paginate
 
 router = APIRouter()
@@ -30,6 +31,7 @@ async def get_subjects(
     search: Optional[str] = None,
     department_id: Optional[int] = None,
     semester: Optional[int] = None,
+    semester_type: Optional[SemesterType] = None,
     academic_year: Optional[str] = None,
     is_active: Optional[bool] = None,
     page: int = QueryParam(1, ge=1),
@@ -61,6 +63,9 @@ async def get_subjects(
     if semester is not None:
         stmt = stmt.where(Subject.semester == semester)
 
+    if semester_type is not None:
+        stmt = stmt.where(Subject.semester_type == semester_type)
+
     if is_active is not None:
         stmt = stmt.where(Subject.is_active == is_active)
 
@@ -79,6 +84,7 @@ async def get_subjects(
             name=subject.name,
             department_id=subject.department_id,
             coordinator_id=subject.coordinator_id,
+            semester_type=subject.semester_type,
             semester=subject.semester,
             credits=subject.credits,
             is_active=subject.is_active,
@@ -125,6 +131,7 @@ async def get_subject(
         name=subject.name,
         department_id=subject.department_id,
         coordinator_id=subject.coordinator_id,
+        semester_type=subject.semester_type,
         semester=subject.semester,
         credits=subject.credits,
         is_active=subject.is_active,
@@ -179,6 +186,7 @@ async def create_subject(
         name=subject_data.name,
         department_id=subject_data.department_id,
         coordinator_id=subject_data.coordinator_id,
+        semester_type=subject_data.semester_type,
         semester=subject_data.semester,
         credits=subject_data.credits,
         is_active=subject_data.is_active
@@ -194,6 +202,7 @@ async def create_subject(
         name=new_subject.name,
         department_id=new_subject.department_id,
         coordinator_id=new_subject.coordinator_id,
+        semester_type=new_subject.semester_type,
         semester=new_subject.semester,
         credits=new_subject.credits,
         is_active=new_subject.is_active,
@@ -260,7 +269,10 @@ async def update_subject(
                 )
         subject.coordinator_id = subject_data.coordinator_id
 
-    if subject_data.semester is not None:
+    if 'semester_type' in subject_data.model_fields_set:
+        subject.semester_type = subject_data.semester_type
+
+    if 'semester' in subject_data.model_fields_set:
         subject.semester = subject_data.semester
 
     if subject_data.credits is not None:
@@ -278,6 +290,7 @@ async def update_subject(
         name=subject.name,
         department_id=subject.department_id,
         coordinator_id=subject.coordinator_id,
+        semester_type=subject.semester_type,
         semester=subject.semester,
         credits=subject.credits,
         is_active=subject.is_active,
@@ -520,6 +533,7 @@ async def get_my_assigned_subjects(
             name=subject.name,
             department_id=subject.department_id,
             coordinator_id=subject.coordinator_id,
+            semester_type=subject.semester_type,
             semester=subject.semester,
             credits=subject.credits,
             is_active=subject.is_active,

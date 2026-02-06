@@ -15,7 +15,7 @@ from app.models.assessment import Assessment
 from app.models.subject import Subject
 from app.schemas.mark import MarkCreate, MarkUpdate, MarkApproval, MarkResponse
 from app.core.permissions import Permission
-from app.core.constants import MarkStatus
+from app.core.constants import MarkStatus, SemesterType
 from app.services.mark_service import MarkService
 from app.utils.pagination import paginate
 
@@ -59,6 +59,7 @@ async def get_marks(
     student_id: Optional[int] = None,
     subject_id: Optional[int] = None,
     semester: Optional[int] = None,
+    semester_type: Optional[SemesterType] = None,
     assessment_type: Optional[str] = None,
     status_filter: Optional[MarkStatus] = QueryParam(None, alias="status"),
     academic_year: Optional[str] = None,
@@ -114,6 +115,12 @@ async def get_marks(
         stmt = stmt.where(Mark.assessment.has(Assessment.subject_id == subject_id))
     if semester:
         stmt = stmt.where(Mark.enrollment.has(Enrollment.semester == semester))
+    if semester_type:
+        stmt = stmt.where(
+            Mark.enrollment.has(
+                Enrollment.subject.has(Subject.semester_type == semester_type)
+            )
+        )
     if assessment_type:
         stmt = stmt.where(Mark.assessment.has(Assessment.assessment_type == assessment_type))
     if status_filter:

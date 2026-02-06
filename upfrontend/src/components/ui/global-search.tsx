@@ -133,7 +133,7 @@ export function GlobalSearch({ className, placeholder = "Search users, subjects,
           id: `subject-${subject.id}`,
           type: "subject",
           title: `${subject.code} - ${subject.name}`,
-          subtitle: `${subject.department_name || "No Department"} - Semester ${subject.semester}`,
+          subtitle: `${subject.department_name || "No Department"} - ${subject.semester_type === "GES" ? "GES" : `Semester ${subject.semester}`}`,
           icon: BookOpen,
           href: `/subjects?search=${encodeURIComponent(subject.code)}`,
         });

@@ -92,8 +92,17 @@ const generateBatchOptions = (): string[] => {
   return batches;
 };
 
-// Generate semester options
-const semesters = [1, 2, 3, 4, 5, 6, 7, 8];
+// Semester options with type grouping
+const semesterOptions = [
+  { value: 1, label: "1", group: "General" },
+  { value: 2, label: "2", group: "General" },
+  { value: 3, label: "3", group: "General" },
+  { value: 4, label: "4", group: "Special" },
+  { value: 5, label: "5", group: "Special" },
+  { value: 6, label: "6", group: "Special" },
+  { value: 7, label: "7", group: "Special" },
+  { value: 8, label: "8", group: "Special" },
+] as const;
 
 export function MarksPage() {
   const { user } = useAuth();
@@ -101,7 +110,7 @@ export function MarksPage() {
 
   // Selection state - hierarchical
   const [selectedDepartment, setSelectedDepartment] = useState<number | null>(null);
-  const [selectedSemester, setSelectedSemester] = useState<number | null>(null);
+  const [selectedSemester, setSelectedSemester] = useState<number | string | null>(null);
   const [selectedSubject, setSelectedSubject] = useState<number | null>(null);
   const [selectedBatch, setSelectedBatch] = useState<string>("");
 
@@ -143,8 +152,11 @@ export function MarksPage() {
   }, []);
 
   // Fetch subjects when department and semester are selected
+  // For GES: no department needed
   useEffect(() => {
-    if (selectedDepartment && selectedSemester) {
+    if (selectedSemester === "GES") {
+      fetchSubjects();
+    } else if (selectedDepartment && selectedSemester) {
       fetchSubjects();
     } else {
       setSubjects([]);
@@ -190,16 +202,27 @@ export function MarksPage() {
   };
 
   const fetchSubjects = async () => {
-    if (!selectedDepartment || !selectedSemester) return;
-
     try {
       setLoadingSubjects(true);
-      const response = await api.getSubjects({
-        department_id: selectedDepartment,
-        semester: selectedSemester,
-        is_active: true,
-        page_size: 100,
-      });
+
+      let response;
+      if (selectedSemester === "GES") {
+        // GES subjects are department-independent
+        response = await api.getSubjects({
+          semester_type: "GES",
+          is_active: true,
+          page_size: 100,
+        });
+      } else {
+        if (!selectedDepartment || !selectedSemester) return;
+        response = await api.getSubjects({
+          department_id: selectedDepartment,
+          semester: selectedSemester as number,
+          is_active: true,
+          page_size: 100,
+        });
+      }
+
       setSubjects(response.items);
     } catch (error: unknown) {
       toast({
@@ -524,7 +547,7 @@ export function MarksPage() {
       crumbs.push({ label: getSelectedDepartmentName() });
     }
     if (selectedSemester) {
-      crumbs.push({ label: `Semester ${selectedSemester}` });
+      crumbs.push({ label: selectedSemester === "GES" ? "GES" : `Semester ${selectedSemester}` });
     }
     if (selectedSubject) {
       crumbs.push({ label: getSelectedSubjectName() });
@@ -625,25 +648,55 @@ export function MarksPage() {
               ({getSelectedDepartmentName()})
             </span>
           </div>
-          <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-8 gap-4">
-            {semesters.map((semester) => (
+          <div className="space-y-3">
+            <p className="text-sm text-muted-foreground font-medium">General (All Departments)</p>
+            <div className="grid grid-cols-3 md:grid-cols-3 lg:grid-cols-3 gap-4">
+              {semesterOptions.filter(s => s.group === "General").map((sem) => (
+                <Card
+                  key={sem.value}
+                  className="cursor-pointer hover:border-blue-500 border-blue-200 transition-colors"
+                  onClick={() => setSelectedSemester(sem.value)}
+                >
+                  <CardHeader className="p-4 text-center">
+                    <CardTitle className="text-2xl text-blue-600">{sem.label}</CardTitle>
+                    <CardDescription>General</CardDescription>
+                  </CardHeader>
+                </Card>
+              ))}
+            </div>
+            <p className="text-sm text-muted-foreground font-medium pt-2">Special (Department Specific)</p>
+            <div className="grid grid-cols-2 md:grid-cols-5 lg:grid-cols-5 gap-4">
+              {semesterOptions.filter(s => s.group === "Special").map((sem) => (
+                <Card
+                  key={sem.value}
+                  className="cursor-pointer hover:border-purple-500 border-purple-200 transition-colors"
+                  onClick={() => setSelectedSemester(sem.value)}
+                >
+                  <CardHeader className="p-4 text-center">
+                    <CardTitle className="text-2xl text-purple-600">{sem.label}</CardTitle>
+                    <CardDescription>Special</CardDescription>
+                  </CardHeader>
+                </Card>
+              ))}
+            </div>
+            <p className="text-sm text-muted-foreground font-medium pt-2">General Elective Subjects</p>
+            <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-3 gap-4">
               <Card
-                key={semester}
-                className="cursor-pointer hover:border-primary transition-colors"
-                onClick={() => setSelectedSemester(semester)}
+                className="cursor-pointer hover:border-amber-500 border-amber-200 transition-colors"
+                onClick={() => setSelectedSemester("GES")}
               >
                 <CardHeader className="p-4 text-center">
-                  <CardTitle className="text-2xl">{semester}</CardTitle>
-                  <CardDescription>Semester</CardDescription>
+                  <CardTitle className="text-2xl text-amber-600">GES</CardTitle>
+                  <CardDescription>Elective Subjects</CardDescription>
                 </CardHeader>
               </Card>
-            ))}
+            </div>
           </div>
         </div>
       )}
 
       {/* Step 3: Select Subject */}
-      {selectedDepartment && selectedSemester && !selectedSubject && (
+      {((selectedSemester === "GES") || (selectedDepartment && selectedSemester)) && !selectedSubject && (
         <div className="space-y-4">
           <Button variant="ghost" onClick={() => resetSelection("semester")} className="mb-2">
             <ArrowLeft className="mr-2 h-4 w-4" />
@@ -653,7 +706,7 @@ export function MarksPage() {
             <GraduationCap className="h-5 w-5 text-primary" />
             <span>Step 3: Select Subject</span>
             <span className="text-muted-foreground text-sm ml-2">
-              ({getSelectedDepartmentName()} - Semester {selectedSemester})
+              ({selectedSemester === "GES" ? "GES - General Elective" : `${getSelectedDepartmentName()} - Semester ${selectedSemester}`})
             </span>
           </div>
 
@@ -698,7 +751,7 @@ export function MarksPage() {
       )}
 
       {/* Step 4: Select Batch */}
-      {selectedDepartment && selectedSemester && selectedSubject && !selectedBatch && (
+      {((selectedSemester === "GES") || (selectedDepartment && selectedSemester)) && selectedSubject && !selectedBatch && (
         <div className="space-y-4">
           <Button variant="ghost" onClick={() => resetSelection("subject")} className="mb-2">
             <ArrowLeft className="mr-2 h-4 w-4" />
@@ -734,7 +787,7 @@ export function MarksPage() {
       )}
 
       {/* Step 5: Show Marks Table */}
-      {selectedDepartment && selectedSemester && selectedSubject && selectedBatch && (
+      {((selectedSemester === "GES") || (selectedDepartment && selectedSemester)) && selectedSubject && selectedBatch && (
         <div className="space-y-4">
           <div className="flex items-center gap-2">
             <Button variant="ghost" onClick={() => resetSelection("batch")}>
@@ -743,9 +796,13 @@ export function MarksPage() {
             </Button>
             <div className="flex-1" />
             <div className="flex items-center gap-2 px-3 py-1 bg-muted rounded-lg text-sm">
-              <span className="font-medium">{getSelectedDepartmentName()}</span>
-              <ChevronRight className="h-4 w-4 text-muted-foreground" />
-              <span>Sem {selectedSemester}</span>
+              {selectedSemester !== "GES" && (
+                <>
+                  <span className="font-medium">{getSelectedDepartmentName()}</span>
+                  <ChevronRight className="h-4 w-4 text-muted-foreground" />
+                </>
+              )}
+              <span>{selectedSemester === "GES" ? "GES" : `Sem ${selectedSemester}`}</span>
               <ChevronRight className="h-4 w-4 text-muted-foreground" />
               <span>{getSelectedSubjectName()}</span>
               <ChevronRight className="h-4 w-4 text-muted-foreground" />

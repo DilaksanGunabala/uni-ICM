@@ -14,6 +14,8 @@ import {
   Search,
   Filter,
   BookOpen,
+  ArrowLeft,
+  ChevronRight,
 } from "lucide-react";
 import {
   DropdownMenu,
@@ -30,6 +32,13 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
 import {
   Select,
@@ -45,29 +54,45 @@ interface SubjectData {
   id: string;
   code: string;
   name: string;
-  departmentId: number;
+  semesterType: string;
+  departmentId: number | null;
   departmentName: string;
-  semester: number;
-  academicYear: string;
+  semester: number | null;
   credits: number;
   isActive: boolean;
+  coordinatorName: string | null;
 }
+
+// Semester options with type grouping
+const semesterOptions = [
+  { value: 1, label: "1", group: "General" },
+  { value: 2, label: "2", group: "General" },
+  { value: 3, label: "3", group: "General" },
+  { value: 4, label: "4", group: "Special" },
+  { value: 5, label: "5", group: "Special" },
+  { value: 6, label: "6", group: "Special" },
+  { value: 7, label: "7", group: "Special" },
+  { value: 8, label: "8", group: "Special" },
+] as const;
 
 export function SubjectsPage() {
   const { toast } = useToast();
   const [searchParams, setSearchParams] = useSearchParams();
 
+  // Selection state
+  const [selectedSemester, setSelectedSemester] = useState<number | string | null>(null);
+
   const [subjects, setSubjects] = useState<SubjectData[]>([]);
   const [filteredSubjects, setFilteredSubjects] = useState<SubjectData[]>([]);
   const [departments, setDepartments] = useState<BackendDepartment[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadingSubjects, setLoadingSubjects] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [saving, setSaving] = useState(false);
 
   // Filter states
   const [searchQuery, setSearchQuery] = useState(searchParams.get('search') || "");
   const [departmentFilter, setDepartmentFilter] = useState<string>("all");
-  const [semesterFilter, setSemesterFilter] = useState<string>("all");
 
   // Dialog states
   const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
@@ -78,37 +103,87 @@ export function SubjectsPage() {
   const [formData, setFormData] = useState({
     code: "",
     name: "",
+    semester_type: "GENERAL",
     department_id: "",
     semester: "1",
-    academic_year: "2024-2025",
     credits: "3",
   });
 
-  const fetchSubjects = async (showRefreshing = false) => {
+  // Stats for semester cards
+  const [semesterCounts, setSemesterCounts] = useState<Record<string, number>>({});
+
+  // Fetch departments on mount
+  useEffect(() => {
+    fetchDepartments();
+    fetchAllSubjectsForCounts();
+  }, []);
+
+  // Fetch subjects when semester is selected
+  useEffect(() => {
+    if (selectedSemester !== null) {
+      fetchSubjectsForSemester();
+    }
+  }, [selectedSemester]);
+
+  const fetchDepartments = async () => {
+    try {
+      const deptResponse = await api.getDepartments({ page_size: 100 });
+      setDepartments(deptResponse.items);
+    } catch (error) {
+      console.error('Failed to fetch departments:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const fetchAllSubjectsForCounts = async () => {
+    try {
+      const response = await api.getSubjects({ page_size: 500 });
+      const counts: Record<string, number> = {};
+
+      response.items.forEach((s: BackendSubject) => {
+        if (s.semester_type === "GES") {
+          counts["GES"] = (counts["GES"] || 0) + 1;
+        } else if (s.semester !== null) {
+          counts[s.semester.toString()] = (counts[s.semester.toString()] || 0) + 1;
+        }
+      });
+
+      setSemesterCounts(counts);
+    } catch (error) {
+      console.error('Failed to fetch subject counts:', error);
+    }
+  };
+
+  const fetchSubjectsForSemester = async (showRefreshing = false) => {
     try {
       if (showRefreshing) {
         setRefreshing(true);
       } else {
-        setLoading(true);
+        setLoadingSubjects(true);
       }
 
-      const [subjectsResponse, deptResponse] = await Promise.all([
-        api.getSubjects({ page_size: 100 }),
-        api.getDepartments({ page_size: 100 }),
-      ]);
+      let params: Record<string, unknown> = { page_size: 100 };
 
-      setDepartments(deptResponse.items);
+      if (selectedSemester === "GES") {
+        params.semester_type = "GES";
+      } else if (typeof selectedSemester === "number") {
+        params.semester = selectedSemester;
+      }
+
+      const subjectsResponse = await api.getSubjects(params);
 
       const mappedSubjects: SubjectData[] = subjectsResponse.items.map((s: BackendSubject) => ({
         id: s.id.toString(),
         code: s.code,
         name: s.name,
+        semesterType: s.semester_type || "GENERAL",
         departmentId: s.department_id,
         departmentName: s.department_name || "N/A",
         semester: s.semester,
-        academicYear: s.academic_year,
         credits: s.credits,
         isActive: s.is_active,
+        coordinatorName: s.coordinator_name || null,
       }));
 
       setSubjects(mappedSubjects);
@@ -120,7 +195,7 @@ export function SubjectsPage() {
         variant: "destructive",
       });
     } finally {
-      setLoading(false);
+      setLoadingSubjects(false);
       setRefreshing(false);
     }
   };
@@ -139,22 +214,13 @@ export function SubjectsPage() {
       );
     }
 
-    // Department filter
+    // Department filter (only for Special semesters)
     if (departmentFilter !== "all") {
-      filtered = filtered.filter(s => s.departmentId.toString() === departmentFilter);
-    }
-
-    // Semester filter
-    if (semesterFilter !== "all") {
-      filtered = filtered.filter(s => s.semester.toString() === semesterFilter);
+      filtered = filtered.filter(s => s.departmentId?.toString() === departmentFilter);
     }
 
     setFilteredSubjects(filtered);
-  }, [subjects, searchQuery, departmentFilter, semesterFilter]);
-
-  useEffect(() => {
-    fetchSubjects();
-  }, []);
+  }, [subjects, searchQuery, departmentFilter]);
 
   // Update URL when search changes
   useEffect(() => {
@@ -172,12 +238,12 @@ export function SubjectsPage() {
       await api.createSubject({
         code: formData.code,
         name: formData.name,
-        department_id: parseInt(formData.department_id),
-        semester: parseInt(formData.semester),
-        academic_year: formData.academic_year,
+        semester_type: formData.semester_type,
+        department_id: formData.semester_type === "SPECIAL" ? parseInt(formData.department_id) : undefined,
+        semester: formData.semester_type !== "GES" ? parseInt(formData.semester) : undefined,
         credits: parseInt(formData.credits),
         is_active: true,
-      });
+      } as Partial<BackendSubject>);
 
       toast({
         title: "Subject Created",
@@ -186,7 +252,8 @@ export function SubjectsPage() {
 
       setIsCreateDialogOpen(false);
       resetForm();
-      fetchSubjects();
+      fetchSubjectsForSemester();
+      fetchAllSubjectsForCounts();
     } catch (error: unknown) {
       toast({
         title: "Error",
@@ -207,11 +274,11 @@ export function SubjectsPage() {
       await api.updateSubject(parseInt(selectedSubject.id), {
         code: formData.code,
         name: formData.name,
-        department_id: parseInt(formData.department_id),
-        semester: parseInt(formData.semester),
-        academic_year: formData.academic_year,
+        semester_type: formData.semester_type,
+        department_id: formData.semester_type === "SPECIAL" ? parseInt(formData.department_id) : null,
+        semester: formData.semester_type !== "GES" ? parseInt(formData.semester) : null,
         credits: parseInt(formData.credits),
-      });
+      } as Partial<BackendSubject>);
 
       toast({
         title: "Subject Updated",
@@ -220,7 +287,8 @@ export function SubjectsPage() {
 
       setIsEditDialogOpen(false);
       resetForm();
-      fetchSubjects();
+      fetchSubjectsForSemester();
+      fetchAllSubjectsForCounts();
     } catch (error: unknown) {
       toast({
         title: "Error",
@@ -246,7 +314,8 @@ export function SubjectsPage() {
 
       setIsDeleteDialogOpen(false);
       setSelectedSubject(null);
-      fetchSubjects();
+      fetchSubjectsForSemester();
+      fetchAllSubjectsForCounts();
     } catch (error: unknown) {
       toast({
         title: "Error",
@@ -259,15 +328,37 @@ export function SubjectsPage() {
   };
 
   const resetForm = () => {
+    // Pre-fill form based on selected semester
+    let defaultSemesterType = "GENERAL";
+    let defaultSemester = "1";
+
+    if (selectedSemester === "GES") {
+      defaultSemesterType = "GES";
+      defaultSemester = "";
+    } else if (typeof selectedSemester === "number") {
+      if (selectedSemester >= 4) {
+        defaultSemesterType = "SPECIAL";
+        defaultSemester = selectedSemester.toString();
+      } else {
+        defaultSemesterType = "GENERAL";
+        defaultSemester = selectedSemester.toString();
+      }
+    }
+
     setFormData({
       code: "",
       name: "",
+      semester_type: defaultSemesterType,
       department_id: "",
-      semester: "1",
-      academic_year: "2024-2025",
+      semester: defaultSemester,
       credits: "3",
     });
     setSelectedSubject(null);
+  };
+
+  const openCreateDialog = () => {
+    resetForm();
+    setIsCreateDialogOpen(true);
   };
 
   const openEditDialog = (subject: SubjectData) => {
@@ -275,9 +366,9 @@ export function SubjectsPage() {
     setFormData({
       code: subject.code,
       name: subject.name,
-      department_id: subject.departmentId.toString(),
-      semester: subject.semester.toString(),
-      academic_year: subject.academicYear,
+      semester_type: subject.semesterType,
+      department_id: subject.departmentId ? subject.departmentId.toString() : "",
+      semester: subject.semester ? subject.semester.toString() : "1",
       credits: subject.credits.toString(),
     });
     setIsEditDialogOpen(true);
@@ -291,10 +382,22 @@ export function SubjectsPage() {
   const clearFilters = () => {
     setSearchQuery("");
     setDepartmentFilter("all");
-    setSemesterFilter("all");
   };
 
-  const hasActiveFilters = searchQuery || departmentFilter !== "all" || semesterFilter !== "all";
+  const hasActiveFilters = searchQuery || departmentFilter !== "all";
+
+  const getSemesterLabel = () => {
+    if (selectedSemester === "GES") {
+      return "GES - General Elective Subjects";
+    }
+    const sem = semesterOptions.find(s => s.value === selectedSemester);
+    if (sem) {
+      return `Semester ${sem.label} (${sem.group})`;
+    }
+    return "";
+  };
+
+  const isSpecialSemester = typeof selectedSemester === "number" && selectedSemester >= 4;
 
   const columns: Column<SubjectData>[] = [
     {
@@ -314,25 +417,19 @@ export function SubjectsPage() {
       ),
       sortable: true,
     },
-    {
-      key: "departmentName",
+    ...(isSpecialSemester ? [{
+      key: "departmentName" as keyof SubjectData,
       header: "Department",
-      cell: (row) => <span className="text-sm">{row.departmentName}</span>,
-    },
+      cell: (row: SubjectData) => <span className="text-sm">{row.departmentName}</span>,
+    }] : []),
     {
-      key: "semester",
-      header: "Semester",
+      key: "coordinatorName",
+      header: "Coordinator",
       cell: (row) => (
-        <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-primary/10 text-primary">
-          Sem {row.semester}
+        <span className="text-sm text-muted-foreground">
+          {row.coordinatorName || "Not assigned"}
         </span>
       ),
-      sortable: true,
-    },
-    {
-      key: "academicYear",
-      header: "Academic Year",
-      cell: (row) => <span className="text-sm text-muted-foreground">{row.academicYear}</span>,
     },
     {
       key: "status",
@@ -394,112 +491,216 @@ export function SubjectsPage() {
     <div>
       <PageHeader
         title="Subject Management"
-        description="Manage subjects and assign lecturers"
-        breadcrumbs={[{ label: "Subjects" }]}
+        description="Manage subjects by semester"
+        breadcrumbs={
+          selectedSemester !== null
+            ? [
+                { label: "Subjects", onClick: () => setSelectedSemester(null) },
+                { label: getSemesterLabel() },
+              ]
+            : [{ label: "Subjects" }]
+        }
         actions={
-          <div className="flex items-center gap-2">
-            <Button
-              variant="outline"
-              size="icon"
-              onClick={() => fetchSubjects(true)}
-              disabled={refreshing}
-            >
-              <RefreshCw className={`h-4 w-4 ${refreshing ? 'animate-spin' : ''}`} />
-            </Button>
-            <Button onClick={() => setIsCreateDialogOpen(true)}>
-              <Plus className="mr-2 h-4 w-4" />
-              Add Subject
-            </Button>
-          </div>
+          selectedSemester !== null ? (
+            <div className="flex items-center gap-2">
+              <Button
+                variant="outline"
+                size="icon"
+                onClick={() => fetchSubjectsForSemester(true)}
+                disabled={refreshing}
+              >
+                <RefreshCw className={`h-4 w-4 ${refreshing ? 'animate-spin' : ''}`} />
+              </Button>
+              <Button onClick={openCreateDialog}>
+                <Plus className="mr-2 h-4 w-4" />
+                Add Subject
+              </Button>
+            </div>
+          ) : undefined
         }
       />
 
-      {/* Stats */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
-        <div className="bg-card rounded-lg border p-4">
-          <div className="flex items-center gap-3">
-            <div className="p-2 rounded-lg bg-primary/10">
-              <BookOpen className="h-5 w-5 text-primary" />
+      {/* Step 1: Select Semester */}
+      {selectedSemester === null && (
+        <div className="space-y-6">
+          <div className="flex items-center gap-2 text-lg font-medium">
+            <BookOpen className="h-5 w-5 text-primary" />
+            <span>Select Semester to View Subjects</span>
+          </div>
+
+          {/* General Semesters (1-3) */}
+          <div className="space-y-3">
+            <p className="text-sm text-muted-foreground font-medium">General Semesters (All Departments)</p>
+            <div className="grid grid-cols-3 md:grid-cols-3 lg:grid-cols-3 gap-4">
+              {semesterOptions.filter(s => s.group === "General").map((sem) => (
+                <Card
+                  key={sem.value}
+                  className="cursor-pointer hover:border-blue-500 border-blue-200 transition-colors"
+                  onClick={() => setSelectedSemester(sem.value)}
+                >
+                  <CardHeader className="p-6 text-center">
+                    <CardTitle className="text-3xl text-blue-600">{sem.label}</CardTitle>
+                    <CardDescription>General Semester</CardDescription>
+                  </CardHeader>
+                  <CardContent className="pt-0 text-center">
+                    <p className="text-sm text-muted-foreground">
+                      {semesterCounts[sem.value.toString()] || 0} subjects
+                    </p>
+                  </CardContent>
+                </Card>
+              ))}
             </div>
-            <div>
-              <p className="text-2xl font-bold">{subjects.length}</p>
-              <p className="text-xs text-muted-foreground">Total Subjects</p>
+          </div>
+
+          {/* Special Semesters (4-8) */}
+          <div className="space-y-3">
+            <p className="text-sm text-muted-foreground font-medium">Special Semesters (Department Specific)</p>
+            <div className="grid grid-cols-2 md:grid-cols-5 lg:grid-cols-5 gap-4">
+              {semesterOptions.filter(s => s.group === "Special").map((sem) => (
+                <Card
+                  key={sem.value}
+                  className="cursor-pointer hover:border-purple-500 border-purple-200 transition-colors"
+                  onClick={() => setSelectedSemester(sem.value)}
+                >
+                  <CardHeader className="p-4 text-center">
+                    <CardTitle className="text-2xl text-purple-600">{sem.label}</CardTitle>
+                    <CardDescription>Special</CardDescription>
+                  </CardHeader>
+                  <CardContent className="pt-0 text-center">
+                    <p className="text-xs text-muted-foreground">
+                      {semesterCounts[sem.value.toString()] || 0} subjects
+                    </p>
+                  </CardContent>
+                </Card>
+              ))}
+            </div>
+          </div>
+
+          {/* GES */}
+          <div className="space-y-3">
+            <p className="text-sm text-muted-foreground font-medium">General Elective Subjects</p>
+            <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-3 gap-4">
+              <Card
+                className="cursor-pointer hover:border-amber-500 border-amber-200 transition-colors"
+                onClick={() => setSelectedSemester("GES")}
+              >
+                <CardHeader className="p-6 text-center">
+                  <CardTitle className="text-3xl text-amber-600">GES</CardTitle>
+                  <CardDescription>General Elective Subjects</CardDescription>
+                </CardHeader>
+                <CardContent className="pt-0 text-center">
+                  <p className="text-sm text-muted-foreground">
+                    {semesterCounts["GES"] || 0} subjects
+                  </p>
+                </CardContent>
+              </Card>
             </div>
           </div>
         </div>
-        <div className="bg-card rounded-lg border p-4">
-          <div className="flex items-center gap-3">
-            <div className="p-2 rounded-lg bg-success/10">
-              <BookOpen className="h-5 w-5 text-success" />
-            </div>
-            <div>
-              <p className="text-2xl font-bold">{subjects.filter(s => s.isActive).length}</p>
-              <p className="text-xs text-muted-foreground">Active</p>
-            </div>
-          </div>
-        </div>
-      </div>
+      )}
 
-      {/* Filters */}
-      <div className="flex flex-wrap items-center gap-3 mb-6 p-4 bg-muted/50 rounded-lg">
-        <Filter className="h-4 w-4 text-muted-foreground" />
-
-        <div className="relative flex-1 min-w-[200px] max-w-sm">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-          <Input
-            type="text"
-            placeholder="Search by code, name..."
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            className="pl-9 h-9"
-          />
-        </div>
-
-        <Select value={departmentFilter} onValueChange={setDepartmentFilter}>
-          <SelectTrigger className="w-44 h-9">
-            <SelectValue placeholder="All Departments" />
-          </SelectTrigger>
-          <SelectContent className="bg-popover">
-            <SelectItem value="all">All Departments</SelectItem>
-            {departments.map((dept) => (
-              <SelectItem key={dept.id} value={dept.id.toString()}>
-                {dept.name}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-
-        <Select value={semesterFilter} onValueChange={setSemesterFilter}>
-          <SelectTrigger className="w-32 h-9">
-            <SelectValue placeholder="All Semesters" />
-          </SelectTrigger>
-          <SelectContent className="bg-popover">
-            <SelectItem value="all">All Semesters</SelectItem>
-            {[1, 2, 3, 4, 5, 6, 7, 8].map((sem) => (
-              <SelectItem key={sem} value={sem.toString()}>
-                Semester {sem}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-
-        {hasActiveFilters && (
-          <Button variant="ghost" size="sm" onClick={clearFilters}>
-            Clear filters
+      {/* Step 2: Show Subjects Table */}
+      {selectedSemester !== null && (
+        <div className="space-y-4">
+          <Button variant="ghost" onClick={() => setSelectedSemester(null)} className="mb-2">
+            <ArrowLeft className="mr-2 h-4 w-4" />
+            Back to Semesters
           </Button>
-        )}
 
-        <span className="ml-auto text-sm text-muted-foreground">
-          {filteredSubjects.length} of {subjects.length} subjects
-        </span>
-      </div>
+          {/* Stats */}
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+            <div className="bg-card rounded-lg border p-4">
+              <div className="flex items-center gap-3">
+                <div className={`p-2 rounded-lg ${
+                  selectedSemester === "GES"
+                    ? "bg-amber-500/10"
+                    : isSpecialSemester
+                      ? "bg-purple-500/10"
+                      : "bg-blue-500/10"
+                }`}>
+                  <BookOpen className={`h-5 w-5 ${
+                    selectedSemester === "GES"
+                      ? "text-amber-600"
+                      : isSpecialSemester
+                        ? "text-purple-600"
+                        : "text-blue-600"
+                  }`} />
+                </div>
+                <div>
+                  <p className="text-2xl font-bold">{subjects.length}</p>
+                  <p className="text-xs text-muted-foreground">Total Subjects</p>
+                </div>
+              </div>
+            </div>
+            <div className="bg-card rounded-lg border p-4">
+              <div className="flex items-center gap-3">
+                <div className="p-2 rounded-lg bg-success/10">
+                  <BookOpen className="h-5 w-5 text-success" />
+                </div>
+                <div>
+                  <p className="text-2xl font-bold">{subjects.filter(s => s.isActive).length}</p>
+                  <p className="text-xs text-muted-foreground">Active</p>
+                </div>
+              </div>
+            </div>
+          </div>
 
-      <DataTable
-        columns={columns}
-        data={filteredSubjects}
-        pageSize={10}
-        emptyMessage="No subjects found"
-      />
+          {/* Filters */}
+          <div className="flex flex-wrap items-center gap-3 mb-6 p-4 bg-muted/50 rounded-lg">
+            <Filter className="h-4 w-4 text-muted-foreground" />
+
+            <div className="relative flex-1 min-w-[200px] max-w-sm">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+              <Input
+                type="text"
+                placeholder="Search by code, name..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="pl-9 h-9"
+              />
+            </div>
+
+            {isSpecialSemester && (
+              <Select value={departmentFilter} onValueChange={setDepartmentFilter}>
+                <SelectTrigger className="w-44 h-9">
+                  <SelectValue placeholder="All Departments" />
+                </SelectTrigger>
+                <SelectContent className="bg-popover">
+                  <SelectItem value="all">All Departments</SelectItem>
+                  {departments.map((dept) => (
+                    <SelectItem key={dept.id} value={dept.id.toString()}>
+                      {dept.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            )}
+
+            {hasActiveFilters && (
+              <Button variant="ghost" size="sm" onClick={clearFilters}>
+                Clear filters
+              </Button>
+            )}
+
+            <span className="ml-auto text-sm text-muted-foreground">
+              {filteredSubjects.length} of {subjects.length} subjects
+            </span>
+          </div>
+
+          {loadingSubjects ? (
+            <div className="flex items-center justify-center h-32">
+              <Loader2 className="h-6 w-6 animate-spin text-primary" />
+            </div>
+          ) : (
+            <DataTable
+              columns={columns}
+              data={filteredSubjects}
+              pageSize={10}
+              emptyMessage="No subjects found for this semester"
+            />
+          )}
+        </div>
+      )}
 
       {/* Create Subject Dialog */}
       <Dialog open={isCreateDialogOpen} onOpenChange={setIsCreateDialogOpen}>
@@ -507,7 +708,7 @@ export function SubjectsPage() {
           <DialogHeader>
             <DialogTitle>Add New Subject</DialogTitle>
             <DialogDescription>
-              Create a new subject in the system.
+              Create a new subject for {getSemesterLabel()}.
             </DialogDescription>
           </DialogHeader>
           <div className="grid gap-4 py-4">
@@ -546,53 +747,74 @@ export function SubjectsPage() {
                 placeholder="Introduction to Computer Science"
               />
             </div>
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label htmlFor="department">Department *</Label>
-                <Select value={formData.department_id} onValueChange={(value) => setFormData({ ...formData, department_id: value })}>
-                  <SelectTrigger>
-                    <SelectValue placeholder="Select department" />
-                  </SelectTrigger>
-                  <SelectContent className="bg-popover">
-                    {departments.map((dept) => (
-                      <SelectItem key={dept.id} value={dept.id.toString()}>
-                        {dept.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="semester">Semester *</Label>
-                <Select value={formData.semester} onValueChange={(value) => setFormData({ ...formData, semester: value })}>
-                  <SelectTrigger>
-                    <SelectValue placeholder="Select semester" />
-                  </SelectTrigger>
-                  <SelectContent className="bg-popover">
-                    {[1, 2, 3, 4, 5, 6, 7, 8].map((sem) => (
-                      <SelectItem key={sem} value={sem.toString()}>
-                        Semester {sem}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-            </div>
             <div className="space-y-2">
-              <Label htmlFor="academic_year">Academic Year</Label>
-              <Input
-                id="academic_year"
-                value={formData.academic_year}
-                onChange={(e) => setFormData({ ...formData, academic_year: e.target.value })}
-                placeholder="2024-2025"
-              />
+              <Label htmlFor="semester_type">Subject Type *</Label>
+              <Select
+                value={formData.semester_type}
+                onValueChange={(value) => {
+                  const updates: Record<string, string> = { semester_type: value };
+                  if (value === "GENERAL") updates.semester = "1";
+                  else if (value === "SPECIAL") updates.semester = "4";
+                  else if (value === "GES") { updates.semester = ""; updates.department_id = ""; }
+                  if (value !== "SPECIAL") updates.department_id = "";
+                  setFormData({ ...formData, ...updates });
+                }}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Select type" />
+                </SelectTrigger>
+                <SelectContent className="bg-popover">
+                  <SelectItem value="GENERAL">General (Sem 1-3)</SelectItem>
+                  <SelectItem value="SPECIAL">Special (Sem 4-8, Dept Required)</SelectItem>
+                  <SelectItem value="GES">GES (General Elective)</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              {formData.semester_type === "SPECIAL" && (
+                <div className="space-y-2">
+                  <Label htmlFor="department">Department *</Label>
+                  <Select value={formData.department_id} onValueChange={(value) => setFormData({ ...formData, department_id: value })}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select department" />
+                    </SelectTrigger>
+                    <SelectContent className="bg-popover">
+                      {departments.map((dept) => (
+                        <SelectItem key={dept.id} value={dept.id.toString()}>
+                          {dept.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              )}
+              {formData.semester_type !== "GES" && (
+                <div className="space-y-2">
+                  <Label htmlFor="semester">Semester *</Label>
+                  <Select value={formData.semester} onValueChange={(value) => setFormData({ ...formData, semester: value })}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select semester" />
+                    </SelectTrigger>
+                    <SelectContent className="bg-popover">
+                      {(formData.semester_type === "GENERAL" ? [1, 2, 3] : [4, 5, 6, 7, 8]).map((sem) => (
+                        <SelectItem key={sem} value={sem.toString()}>
+                          Semester {sem}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              )}
             </div>
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => { setIsCreateDialogOpen(false); resetForm(); }} disabled={saving}>
               Cancel
             </Button>
-            <Button onClick={handleCreate} disabled={saving || !formData.code || !formData.name || !formData.department_id}>
+            <Button
+              onClick={handleCreate}
+              disabled={saving || !formData.code || !formData.name || (formData.semester_type === "SPECIAL" && !formData.department_id)}
+            >
               {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
               Create Subject
             </Button>
@@ -643,45 +865,64 @@ export function SubjectsPage() {
                 onChange={(e) => setFormData({ ...formData, name: e.target.value })}
               />
             </div>
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label htmlFor="edit_department">Department</Label>
-                <Select value={formData.department_id} onValueChange={(value) => setFormData({ ...formData, department_id: value })}>
-                  <SelectTrigger>
-                    <SelectValue placeholder="Select department" />
-                  </SelectTrigger>
-                  <SelectContent className="bg-popover">
-                    {departments.map((dept) => (
-                      <SelectItem key={dept.id} value={dept.id.toString()}>
-                        {dept.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="edit_semester">Semester</Label>
-                <Select value={formData.semester} onValueChange={(value) => setFormData({ ...formData, semester: value })}>
-                  <SelectTrigger>
-                    <SelectValue placeholder="Select semester" />
-                  </SelectTrigger>
-                  <SelectContent className="bg-popover">
-                    {[1, 2, 3, 4, 5, 6, 7, 8].map((sem) => (
-                      <SelectItem key={sem} value={sem.toString()}>
-                        Semester {sem}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-            </div>
             <div className="space-y-2">
-              <Label htmlFor="edit_academic_year">Academic Year</Label>
-              <Input
-                id="edit_academic_year"
-                value={formData.academic_year}
-                onChange={(e) => setFormData({ ...formData, academic_year: e.target.value })}
-              />
+              <Label htmlFor="edit_semester_type">Subject Type</Label>
+              <Select
+                value={formData.semester_type}
+                onValueChange={(value) => {
+                  const updates: Record<string, string> = { semester_type: value };
+                  if (value === "GENERAL") updates.semester = "1";
+                  else if (value === "SPECIAL") updates.semester = "4";
+                  else if (value === "GES") { updates.semester = ""; updates.department_id = ""; }
+                  if (value !== "SPECIAL") updates.department_id = "";
+                  setFormData({ ...formData, ...updates });
+                }}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Select type" />
+                </SelectTrigger>
+                <SelectContent className="bg-popover">
+                  <SelectItem value="GENERAL">General (Sem 1-3)</SelectItem>
+                  <SelectItem value="SPECIAL">Special (Sem 4-8, Dept Required)</SelectItem>
+                  <SelectItem value="GES">GES (General Elective)</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              {formData.semester_type === "SPECIAL" && (
+                <div className="space-y-2">
+                  <Label htmlFor="edit_department">Department</Label>
+                  <Select value={formData.department_id} onValueChange={(value) => setFormData({ ...formData, department_id: value })}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select department" />
+                    </SelectTrigger>
+                    <SelectContent className="bg-popover">
+                      {departments.map((dept) => (
+                        <SelectItem key={dept.id} value={dept.id.toString()}>
+                          {dept.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              )}
+              {formData.semester_type !== "GES" && (
+                <div className="space-y-2">
+                  <Label htmlFor="edit_semester">Semester</Label>
+                  <Select value={formData.semester} onValueChange={(value) => setFormData({ ...formData, semester: value })}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select semester" />
+                    </SelectTrigger>
+                    <SelectContent className="bg-popover">
+                      {(formData.semester_type === "GENERAL" ? [1, 2, 3] : [4, 5, 6, 7, 8]).map((sem) => (
+                        <SelectItem key={sem} value={sem.toString()}>
+                          Semester {sem}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              )}
             </div>
           </div>
           <DialogFooter>

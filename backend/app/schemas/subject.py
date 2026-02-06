@@ -1,23 +1,52 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, model_validator
 from typing import Optional
 from datetime import datetime
+from app.core.constants import SemesterType, GENERAL_SEMESTERS, SPECIAL_SEMESTERS
 
 
 class SubjectBase(BaseModel):
     """Base subject schema"""
     code: str
     name: str
-    # department_id is optional for general subjects (semester 1-3)
+    # department_id: NULL for GENERAL/GES, required for SPECIAL
     department_id: Optional[int] = None
     # Course coordinator (lecturer responsible for this subject)
     coordinator_id: Optional[int] = None
-    semester: int
+    semester_type: SemesterType
+    # semester: NULL for GES, 1-3 for GENERAL, 4-8 for SPECIAL
+    semester: Optional[int] = None
     credits: int
 
 
 class SubjectCreate(SubjectBase):
     """Schema for creating a subject"""
     is_active: bool = True
+
+    @model_validator(mode='after')
+    def validate_semester_rules(self):
+        st = self.semester_type
+        sem = self.semester
+        dept = self.department_id
+
+        if st == SemesterType.GENERAL:
+            if sem is None or sem not in GENERAL_SEMESTERS:
+                raise ValueError("GENERAL subjects must have semester 1, 2, or 3")
+            if dept is not None:
+                raise ValueError("GENERAL subjects should not have a department")
+
+        elif st == SemesterType.SPECIAL:
+            if sem is None or sem not in SPECIAL_SEMESTERS:
+                raise ValueError("SPECIAL subjects must have semester 4, 5, 6, 7, or 8")
+            if dept is None:
+                raise ValueError("SPECIAL subjects must have a department")
+
+        elif st == SemesterType.GES:
+            if sem is not None:
+                raise ValueError("GES subjects must not have a semester number")
+            if dept is not None:
+                raise ValueError("GES subjects should not have a department")
+
+        return self
 
 
 class SubjectUpdate(BaseModel):
@@ -26,6 +55,7 @@ class SubjectUpdate(BaseModel):
     name: Optional[str] = None
     department_id: Optional[int] = None
     coordinator_id: Optional[int] = None
+    semester_type: Optional[SemesterType] = None
     semester: Optional[int] = None
     credits: Optional[int] = None
     is_active: Optional[bool] = None
@@ -36,11 +66,10 @@ class SubjectResponse(BaseModel):
     id: int
     code: str
     name: str
-    # department_id can be null for general subjects
     department_id: Optional[int] = None
-    # Course coordinator
     coordinator_id: Optional[int] = None
-    semester: int
+    semester_type: SemesterType
+    semester: Optional[int] = None
     credits: int
     is_active: bool
     created_at: datetime

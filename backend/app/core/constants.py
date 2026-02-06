@@ -35,6 +35,19 @@ class AssessmentType(str, Enum):
     OTHER = "OTHER"
 
 
+class SemesterType(str, Enum):
+    """Types of semesters in the faculty"""
+    GENERAL = "GENERAL"       # Semester 1, 2, 3 — department-independent, all students
+    SPECIAL = "SPECIAL"       # Semester 4, 5, 6, 7, 8 — department-specific
+    GES = "GES"               # General Elective Subjects — department-independent, no numbered semester
+
+
+# Semester number sets for validation
+GENERAL_SEMESTERS = {1, 2, 3}
+SPECIAL_SEMESTERS = {4, 5, 6, 7, 8}
+VALID_SEMESTERS = GENERAL_SEMESTERS | SPECIAL_SEMESTERS
+
+
 class AuditAction(str, Enum):
     """Actions tracked in audit logs"""
     INSERT = "INSERT"
