@@ -16,6 +16,7 @@ class User(Base):
     last_name = Column(String(100), nullable=False)
     employee_id = Column(String(50), unique=True, nullable=True, index=True)
     student_id = Column(String(50), unique=True, nullable=True, index=True)
+    batch = Column(Integer, nullable=True, index=True)  # Student batch year (e.g., 2024)
     avatar_url = Column(String(500), nullable=True)  # Profile picture URL
     role_id = Column(Integer, ForeignKey("roles.id", ondelete="RESTRICT"), nullable=False, index=True)
     department_id = Column(Integer, ForeignKey("departments.id", ondelete="SET NULL"), nullable=True, index=True)

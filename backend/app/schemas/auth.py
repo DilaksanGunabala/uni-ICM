@@ -50,3 +50,15 @@ class PasswordChangeRequest(BaseModel):
     current_password: str
     new_password: str
     confirm_password: str
+
+
+class RegisterRequest(BaseModel):
+    """Schema for student registration"""
+    email: EmailStr
+    password: str
+    confirm_password: str
+    first_name: str
+    last_name: str
+    student_id: str
+    department_id: int
+    batch: int  # e.g., 2024, 2023

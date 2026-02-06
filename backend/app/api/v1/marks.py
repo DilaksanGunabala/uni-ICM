@@ -157,6 +157,57 @@ async def get_marks(
     return paginated
 
 
+@router.get("/my/marks", response_model=List[MarkResponse])
+async def get_my_marks(
+    subject_id: Optional[int] = None,
+    semester: Optional[int] = None,
+    academic_year: Optional[str] = None,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Get current student's own marks.
+
+    Returns all approved marks for the logged-in student.
+    Only accessible by students.
+    """
+    # Only students can access this endpoint
+    if current_user.role.name != "STUDENT":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="This endpoint is only accessible by students"
+        )
+
+    stmt = select(Mark).options(
+        selectinload(Mark.enrollment).selectinload(Enrollment.student),
+        selectinload(Mark.enrollment).selectinload(Enrollment.subject),
+        selectinload(Mark.assessment),
+        selectinload(Mark.submitter),
+        selectinload(Mark.reviewer)
+    ).where(
+        Mark.enrollment.has(Enrollment.student_id == current_user.id),
+        Mark.status == MarkStatus.APPROVED
+    )
+
+    # Apply filters
+    if subject_id:
+        stmt = stmt.where(Mark.enrollment.has(Enrollment.subject_id == subject_id))
+
+    if semester:
+        stmt = stmt.where(Mark.enrollment.has(Enrollment.semester == semester))
+
+    if academic_year:
+        stmt = stmt.where(Mark.enrollment.has(Enrollment.academic_year == academic_year))
+
+    # Order by subject and assessment
+    stmt = stmt.order_by(Mark.submitted_at.desc())
+
+    result = await db.execute(stmt)
+    marks = result.scalars().all()
+
+    return [await _build_mark_response(db, mark) for mark in marks]
+
+
 @router.get("/{mark_id}", response_model=MarkResponse)
 async def get_mark_by_id(
     mark_id: int,

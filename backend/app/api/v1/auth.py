@@ -13,8 +13,10 @@ from app.schemas.auth import (
     TokenResponse,
     UserResponse,
     ProfileUpdateRequest,
-    PasswordChangeRequest
+    PasswordChangeRequest,
+    RegisterRequest
 )
+from app.models.role import Role
 from app.core.security import verify_password, create_access_token, get_password_hash
 from app.models.user import User
 from app.config import settings
@@ -68,6 +70,129 @@ async def login(credentials: LoginRequest, db: AsyncSession = Depends(get_db)):
     )
 
     # Prepare user response
+    user_response = UserResponse(
+        id=user.id,
+        email=user.email,
+        first_name=user.first_name,
+        last_name=user.last_name,
+        role=user.role.name,
+        department_id=user.department_id,
+        department_name=user.department.name if user.department else None,
+        employee_id=user.employee_id,
+        student_id=user.student_id,
+        avatar_url=user.avatar_url
+    )
+
+    return TokenResponse(
+        access_token=access_token,
+        token_type="bearer",
+        user=user_response
+    )
+
+
+@router.get("/departments")
+async def get_departments_for_registration(db: AsyncSession = Depends(get_db)):
+    """
+    Public endpoint to get active departments for registration.
+    No authentication required.
+    """
+    from app.models.department import Department
+
+    result = await db.execute(
+        select(Department)
+        .where(Department.is_active == True)
+        .order_by(Department.code)
+    )
+    departments = result.scalars().all()
+
+    return [
+        {"id": d.id, "code": d.code, "name": d.name}
+        for d in departments
+    ]
+
+
+@router.post("/register", response_model=TokenResponse)
+async def register(data: RegisterRequest, db: AsyncSession = Depends(get_db)):
+    """
+    Register a new student account.
+    Only students can self-register; other roles must be created by admin.
+    """
+    # Validate passwords match
+    if data.password != data.confirm_password:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Passwords do not match"
+        )
+
+    # Validate password length
+    if len(data.password) < 6:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Password must be at least 6 characters"
+        )
+
+    # Check if email already exists
+    result = await db.execute(select(User).where(User.email == data.email))
+    if result.scalars().first():
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Email already registered"
+        )
+
+    # Check if student_id already exists
+    result = await db.execute(select(User).where(User.student_id == data.student_id))
+    if result.scalars().first():
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Student ID already registered"
+        )
+
+    # Get the STUDENT role
+    result = await db.execute(select(Role).where(Role.name == "STUDENT"))
+    student_role = result.scalars().first()
+    if not student_role:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Student role not found in system"
+        )
+
+    # Create new user
+    new_user = User(
+        email=data.email,
+        password_hash=get_password_hash(data.password),
+        first_name=data.first_name,
+        last_name=data.last_name,
+        student_id=data.student_id,
+        role_id=student_role.id,
+        department_id=data.department_id,
+        batch=data.batch,
+        is_active=True
+    )
+
+    db.add(new_user)
+    await db.commit()
+    await db.refresh(new_user)
+
+    # Load relationships for response
+    result = await db.execute(
+        select(User).options(
+            selectinload(User.department),
+            selectinload(User.role)
+        ).where(User.id == new_user.id)
+    )
+    user = result.scalars().first()
+
+    # Create access token
+    access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
+    access_token = create_access_token(
+        data={
+            "user_id": user.id,
+            "role": user.role.name,
+            "email": user.email
+        },
+        expires_delta=access_token_expires
+    )
+
     user_response = UserResponse(
         id=user.id,
         email=user.email,

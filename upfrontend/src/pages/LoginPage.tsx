@@ -1,20 +1,23 @@
 import { useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, Link, useLocation } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { GraduationCap, Mail, Lock, Loader2, AlertCircle } from "lucide-react";
-import { UserRole } from "@/types";
+import { GraduationCap, Mail, Lock, Loader2, AlertCircle, CheckCircle2 } from "lucide-react";
 
 export function LoginPage() {
   const navigate = useNavigate();
+  const location = useLocation();
   const { login } = useAuth();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState("");
+
+  // Check if redirected from registration
+  const justRegistered = location.state?.registered === true;
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -78,13 +81,19 @@ export function LoginPage() {
           </CardHeader>
           <CardContent>
             <form onSubmit={handleSubmit} className="space-y-4">
+              {justRegistered && (
+                <div className="flex items-center gap-2 p-3 rounded-lg bg-green-500/10 text-green-600 text-sm">
+                  <CheckCircle2 className="h-4 w-4" />
+                  Account created successfully! Please sign in.
+                </div>
+              )}
               {error && (
                 <div className="flex items-center gap-2 p-3 rounded-lg bg-destructive/10 text-destructive text-sm">
                   <AlertCircle className="h-4 w-4" />
                   {error}
                 </div>
               )}
-              
+
               <div className="space-y-2">
                 <Label htmlFor="email">Email address</Label>
                 <div className="relative">
@@ -129,8 +138,21 @@ export function LoginPage() {
               </Button>
             </form>
 
+            {/* Sign Up Link */}
+            <div className="mt-6 pt-6 border-t text-center">
+              <p className="text-sm text-muted-foreground">
+                Don't have an account?{" "}
+                <Link
+                  to="/register"
+                  className="font-medium text-primary hover:underline"
+                >
+                  Sign up
+                </Link>
+              </p>
+            </div>
+
             {/* Test Accounts Section */}
-            <div className="mt-6 pt-6 border-t">
+            <div className="mt-4 pt-4 border-t">
               <p className="text-sm text-muted-foreground text-center mb-4">
                 Test Accounts (Password: <code className="font-mono bg-muted px-2 py-1 rounded">admin123</code>)
               </p>
