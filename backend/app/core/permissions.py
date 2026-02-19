@@ -69,6 +69,20 @@ ROLE_PERMISSIONS: Dict[Role, List[Permission]] = {
         Permission.GENERATE_REPORTS,
         Permission.VIEW_AUDIT_LOGS,
     ],
+    Role.DEAN: [
+        # Faculty-level oversight
+        Permission.VIEW_ALL_USERS,
+        Permission.VIEW_DEPARTMENT,
+        Permission.VIEW_SUBJECTS,
+        Permission.VIEW_ALL_ENROLLMENTS,
+        Permission.VIEW_ALL_MARKS,
+        Permission.VIEW_DEPARTMENT_MARKS,
+        Permission.APPROVE_MARKS,
+        Permission.REJECT_MARKS,
+        Permission.GENERATE_REPORTS,
+        Permission.VIEW_DEPARTMENT_REPORTS,
+        Permission.VIEW_AUDIT_LOGS,
+    ],
     Role.HOD: [
         # Department-level authority
         Permission.VIEW_DEPARTMENT,
@@ -89,6 +103,16 @@ ROLE_PERMISSIONS: Dict[Role, List[Permission]] = {
         Permission.DELETE_MARKS,
         Permission.VIEW_DEPARTMENT_MARKS,
         Permission.MANAGE_ASSESSMENTS,  # For subjects they teach
+    ],
+    Role.INSTRUCTOR: [
+        # Lab/tutorial instructor — same access as Lecturer
+        Permission.VIEW_SUBJECTS,
+        Permission.VIEW_OWN_SUBJECTS,
+        Permission.ENTER_MARKS,
+        Permission.EDIT_MARKS,
+        Permission.DELETE_MARKS,
+        Permission.VIEW_DEPARTMENT_MARKS,
+        Permission.MANAGE_ASSESSMENTS,
     ],
     Role.STUDENT: [
         # View-only role

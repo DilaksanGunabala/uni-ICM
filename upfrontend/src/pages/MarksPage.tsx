@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useAuth } from "@/contexts/AuthContext";
 import { PageHeader } from "@/components/ui/page-header";
 import { DataTable, Column } from "@/components/ui/data-table";
@@ -6,6 +6,8 @@ import { StatusBadge } from "@/components/ui/status-badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import Papa from "papaparse";
+import * as XLSX from "xlsx";
 import {
   Select,
   SelectContent,
@@ -133,6 +135,13 @@ export function MarksPage() {
   const [isAddMarkDialogOpen, setIsAddMarkDialogOpen] = useState(false);
   const [selectedMark, setSelectedMark] = useState<MarkDisplay | null>(null);
   const [saving, setSaving] = useState(false);
+
+  // Upload state
+  const [uploadFile, setUploadFile] = useState<File | null>(null);
+  const [uploadAssessmentId, setUploadAssessmentId] = useState<string>("");
+  const [uploading, setUploading] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState({ done: 0, total: 0 });
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Add mark form
   const [markForm, setMarkForm] = useState({
@@ -384,16 +393,196 @@ export function MarksPage() {
     }
   };
 
+  const parseUploadFile = (file: File): Promise<Array<{ studentId: string; marks: number }>> => {
+    return new Promise((resolve, reject) => {
+      const extension = file.name.split(".").pop()?.toLowerCase();
+
+      if (extension === "csv") {
+        Papa.parse(file, {
+          header: true,
+          skipEmptyLines: true,
+          complete: (results) => {
+            try {
+              const rows = results.data.map((row: Record<string, string>) => {
+                // Support various column name formats
+                const studentId =
+                  row["Student ID"] || row["student_id"] || row["StudentID"] || row["student id"] || "";
+                const marks =
+                  row["Marks"] || row["marks"] || row["marks_obtained"] || row["Marks Obtained"] || row["score"] || "";
+                return {
+                  studentId: studentId.trim(),
+                  marks: parseFloat(marks),
+                };
+              });
+              resolve(rows.filter((r) => r.studentId && !isNaN(r.marks)));
+            } catch {
+              reject(new Error("Failed to parse CSV file. Ensure columns: Student ID, Marks"));
+            }
+          },
+          error: (err: Error) => reject(err),
+        });
+      } else if (extension === "xlsx" || extension === "xls") {
+        const reader = new FileReader();
+        reader.onload = (e) => {
+          try {
+            const data = new Uint8Array(e.target?.result as ArrayBuffer);
+            const workbook = XLSX.read(data, { type: "array" });
+            const sheet = workbook.Sheets[workbook.SheetNames[0]];
+            const jsonData = XLSX.utils.sheet_to_json<Record<string, string | number>>(sheet);
+
+            const rows = jsonData.map((row) => {
+              const studentId = String(
+                row["Student ID"] || row["student_id"] || row["StudentID"] || row["student id"] || ""
+              );
+              const marks = parseFloat(
+                String(row["Marks"] || row["marks"] || row["marks_obtained"] || row["Marks Obtained"] || row["score"] || "")
+              );
+              return { studentId: studentId.trim(), marks };
+            });
+            resolve(rows.filter((r) => r.studentId && !isNaN(r.marks)));
+          } catch {
+            reject(new Error("Failed to parse Excel file. Ensure columns: Student ID, Marks"));
+          }
+        };
+        reader.onerror = () => reject(new Error("Failed to read file"));
+        reader.readAsArrayBuffer(file);
+      } else {
+        reject(new Error("Unsupported file format. Use CSV or Excel files."));
+      }
+    });
+  };
+
+  const handleBulkUpload = async () => {
+    if (!uploadFile || !uploadAssessmentId || !selectedSubject) {
+      toast({
+        title: "Validation Error",
+        description: "Please select an assessment and upload a file",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    try {
+      setUploading(true);
+
+      // Parse file
+      const rows = await parseUploadFile(uploadFile);
+      if (rows.length === 0) {
+        toast({
+          title: "Error",
+          description: "No valid data found in the file. Ensure columns: Student ID, Marks",
+          variant: "destructive",
+        });
+        return;
+      }
+
+      // Fetch enrollments for this subject to map student IDs to enrollment IDs
+      const enrollmentsResponse = await api.getEnrollments({
+        subject_id: selectedSubject,
+        status: "active",
+        page_size: 500,
+      });
+      const enrollments = enrollmentsResponse.items;
+
+      // Build a map: student_student_id -> enrollment_id
+      const enrollmentMap = new Map<string, number>();
+      enrollments.forEach((e) => {
+        if (e.student_student_id) {
+          enrollmentMap.set(e.student_student_id.toLowerCase(), e.id);
+        }
+      });
+
+      setUploadProgress({ done: 0, total: rows.length });
+
+      let successCount = 0;
+      let failCount = 0;
+      const errors: string[] = [];
+
+      for (const row of rows) {
+        const enrollmentId = enrollmentMap.get(row.studentId.toLowerCase());
+        if (!enrollmentId) {
+          failCount++;
+          errors.push(`Student ${row.studentId}: not enrolled in this subject`);
+          setUploadProgress((prev) => ({ ...prev, done: prev.done + 1 }));
+          continue;
+        }
+
+        try {
+          await api.createMark({
+            enrollment_id: enrollmentId,
+            assessment_id: parseInt(uploadAssessmentId),
+            marks_obtained: row.marks,
+          });
+          successCount++;
+        } catch (error: unknown) {
+          failCount++;
+          errors.push(`Student ${row.studentId}: ${getApiErrorMessage(error, "Failed")}`);
+        }
+        setUploadProgress((prev) => ({ ...prev, done: prev.done + 1 }));
+      }
+
+      if (successCount > 0) {
+        toast({
+          title: "Upload Complete",
+          description: `${successCount} mark(s) uploaded successfully${failCount > 0 ? `, ${failCount} failed` : ""}`,
+        });
+        fetchMarks();
+      }
+
+      if (failCount > 0 && successCount === 0) {
+        toast({
+          title: "Upload Failed",
+          description: errors.slice(0, 3).join("; "),
+          variant: "destructive",
+        });
+      } else if (failCount > 0) {
+        toast({
+          title: "Some Uploads Failed",
+          description: errors.slice(0, 3).join("; "),
+          variant: "destructive",
+        });
+      }
+
+      // Reset dialog
+      setIsUploadDialogOpen(false);
+      setUploadFile(null);
+      setUploadAssessmentId("");
+      setUploadProgress({ done: 0, total: 0 });
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    } catch (error: unknown) {
+      toast({
+        title: "Upload Error",
+        description: getApiErrorMessage(error, "Failed to process upload"),
+        variant: "destructive",
+      });
+    } finally {
+      setUploading(false);
+    }
+  };
+
   const handleDelete = async () => {
     if (!selectedMark) return;
 
-    toast({
-      title: "Mark Deleted",
-      description: "The mark entry has been deleted.",
-      variant: "destructive",
-    });
-    setIsDeleteDialogOpen(false);
-    setSelectedMark(null);
+    try {
+      setSaving(true);
+      await api.deleteMark(selectedMark.id);
+      toast({
+        title: "Mark Deleted",
+        description: "The mark entry has been deleted.",
+        variant: "destructive",
+      });
+      fetchMarks();
+    } catch (error: unknown) {
+      toast({
+        title: "Error",
+        description: getApiErrorMessage(error, "Failed to delete mark"),
+        variant: "destructive",
+      });
+    } finally {
+      setSaving(false);
+      setIsDeleteDialogOpen(false);
+      setSelectedMark(null);
+    }
   };
 
   const resetSelection = (level: "department" | "semester" | "subject" | "batch") => {
@@ -828,7 +1017,15 @@ export function MarksPage() {
       )}
 
       {/* Upload Dialog */}
-      <Dialog open={isUploadDialogOpen} onOpenChange={setIsUploadDialogOpen}>
+      <Dialog open={isUploadDialogOpen} onOpenChange={(open) => {
+        setIsUploadDialogOpen(open);
+        if (!open) {
+          setUploadFile(null);
+          setUploadAssessmentId("");
+          setUploadProgress({ done: 0, total: 0 });
+          if (fileInputRef.current) fileInputRef.current.value = "";
+        }
+      }}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
             <DialogTitle>Bulk Upload Marks</DialogTitle>
@@ -839,7 +1036,7 @@ export function MarksPage() {
           <div className="space-y-4 py-4">
             <div className="space-y-2">
               <Label>Assessment</Label>
-              <Select>
+              <Select value={uploadAssessmentId} onValueChange={setUploadAssessmentId}>
                 <SelectTrigger>
                   <SelectValue placeholder="Select assessment" />
                 </SelectTrigger>
@@ -854,17 +1051,44 @@ export function MarksPage() {
             </div>
             <div className="space-y-2">
               <Label>Upload File</Label>
-              <Input type="file" accept=".csv,.xlsx,.xls" />
+              <Input
+                ref={fileInputRef}
+                type="file"
+                accept=".csv,.xlsx,.xls"
+                onChange={(e) => setUploadFile(e.target.files?.[0] || null)}
+              />
               <p className="text-xs text-muted-foreground">
                 CSV or Excel file with columns: Student ID, Marks
               </p>
             </div>
+            {uploading && uploadProgress.total > 0 && (
+              <div className="space-y-1">
+                <p className="text-sm text-muted-foreground">
+                  Uploading {uploadProgress.done} / {uploadProgress.total}...
+                </p>
+                <div className="w-full bg-secondary rounded-full h-2">
+                  <div
+                    className="bg-primary h-2 rounded-full transition-all"
+                    style={{ width: `${(uploadProgress.done / uploadProgress.total) * 100}%` }}
+                  />
+                </div>
+              </div>
+            )}
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setIsUploadDialogOpen(false)}>
+            <Button variant="outline" onClick={() => setIsUploadDialogOpen(false)} disabled={uploading}>
               Cancel
             </Button>
-            <Button>Upload</Button>
+            <Button onClick={handleBulkUpload} disabled={uploading || !uploadFile || !uploadAssessmentId}>
+              {uploading ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Uploading...
+                </>
+              ) : (
+                "Upload"
+              )}
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

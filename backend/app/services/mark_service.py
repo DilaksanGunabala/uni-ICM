@@ -7,7 +7,9 @@ from datetime import datetime
 from app.models.mark import Mark
 from app.models.user import User
 from app.models.assessment import Assessment
-from app.core.constants import MarkStatus
+from app.models.enrollment import Enrollment
+from app.models.subject import Subject
+from app.core.constants import MarkStatus, EnrollmentStatus
 from app.services.audit_service import AuditService
 
 
@@ -60,6 +62,22 @@ class MarkService:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"Marks obtained ({marks_obtained}) cannot exceed max marks ({assessment.max_marks})"
+            )
+
+        # Verify enrollment exists and student is actively enrolled
+        enrollment_result = await db.execute(
+            select(Enrollment).where(Enrollment.id == enrollment_id)
+        )
+        enrollment = enrollment_result.scalars().first()
+        if not enrollment:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Enrollment not found"
+            )
+        if enrollment.status != EnrollmentStatus.ACTIVE:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Cannot submit marks: student enrollment status is '{enrollment.status}'. Student must be actively enrolled."
             )
 
         # Check if marks already exist for this enrollment and assessment
@@ -196,6 +214,47 @@ class MarkService:
         return mark
 
     @staticmethod
+    async def _check_hod_department_access(
+        db: AsyncSession,
+        mark: Mark,
+        hod: User
+    ) -> None:
+        """
+        Verify that a HOD can only approve/reject marks from their own department.
+        SUPER_ADMIN bypasses this check.
+
+        Raises:
+            HTTPException 403 if HOD tries to act on another department's marks.
+        """
+        # SUPER_ADMIN has unrestricted access
+        if hod.role and hod.role.name != "HOD":
+            return
+
+        enrollment_result = await db.execute(
+            select(Enrollment).where(Enrollment.id == mark.enrollment_id)
+        )
+        enrollment = enrollment_result.scalars().first()
+        if not enrollment:
+            return
+
+        subject_result = await db.execute(
+            select(Subject).where(Subject.id == enrollment.subject_id)
+        )
+        subject = subject_result.scalars().first()
+        if not subject:
+            return
+
+        # GES/General subjects have no department — accessible to all HODs
+        if subject.department_id is None:
+            return
+
+        if subject.department_id != hod.department_id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="You can only approve/reject marks for your own department's subjects"
+            )
+
+    @staticmethod
     async def approve_marks(
         db: AsyncSession,
         mark_id: int,
@@ -237,6 +296,9 @@ class MarkService:
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"Only pending marks can be approved. Current status: {mark.status}"
             )
+
+        # Verify HOD has department access to this mark
+        await MarkService._check_hod_department_access(db, mark, hod)
 
         # Update mark status
         old_status = mark.status
@@ -308,6 +370,9 @@ class MarkService:
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Rejection comments are required"
             )
+
+        # Verify HOD has department access to this mark
+        await MarkService._check_hod_department_access(db, mark, hod)
 
         # Update mark status
         old_status = mark.status

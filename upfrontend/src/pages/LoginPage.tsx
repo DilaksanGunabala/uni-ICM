@@ -1,11 +1,20 @@
 import { useState } from "react";
-import { useNavigate, Link, useLocation } from "react-router-dom";
+import { useNavigate, useLocation } from "react-router-dom";
+
 import { useAuth } from "@/contexts/AuthContext";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { GraduationCap, Mail, Lock, Loader2, AlertCircle, CheckCircle2 } from "lucide-react";
+
+const REGISTER_ROLES = [
+  { label: "Dean", path: "/register/dean" },
+  { label: "HOD", path: "/register/hod" },
+  { label: "Lecturer", path: "/register/lecturer" },
+  { label: "Instructor", path: "/register/instructor" },
+  { label: "Student", path: "/register/student" },
+] as const;
 
 export function LoginPage() {
   const navigate = useNavigate();
@@ -38,22 +47,6 @@ export function LoginPage() {
       }
     } catch (err) {
       setError("Invalid credentials. Please try again.");
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  const handleQuickLogin = async (email: string) => {
-    setEmail(email);
-    setPassword("admin123");
-    setIsLoading(true);
-    try {
-      const success = await login(email, "admin123");
-      if (success) {
-        navigate("/dashboard");
-      }
-    } catch (err) {
-      setError("Login failed. Please try again.");
     } finally {
       setIsLoading(false);
     }
@@ -101,7 +94,7 @@ export function LoginPage() {
                   <Input
                     id="email"
                     type="email"
-                    placeholder="you@university.edu"
+                    placeholder="you@eng.jfn.ac.lk"
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
                     className="pl-10"
@@ -138,63 +131,27 @@ export function LoginPage() {
               </Button>
             </form>
 
-            {/* Sign Up Link */}
-            <div className="mt-6 pt-6 border-t text-center">
-              <p className="text-sm text-muted-foreground">
-                Don't have an account?{" "}
-                <Link
-                  to="/register"
-                  className="font-medium text-primary hover:underline"
-                >
-                  Sign up
-                </Link>
+            {/* Role-Based Registration Panel */}
+            <div className="mt-6 pt-6 border-t">
+              <p className="text-sm text-muted-foreground text-center mb-3">
+                New to the portal? Register as:
               </p>
-            </div>
-
-            {/* Test Accounts Section */}
-            <div className="mt-4 pt-4 border-t">
-              <p className="text-sm text-muted-foreground text-center mb-4">
-                Test Accounts (Password: <code className="font-mono bg-muted px-2 py-1 rounded">admin123</code>)
-              </p>
-              <div className="grid grid-cols-2 gap-2">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => handleQuickLogin("admin@university.edu")}
-                  className="text-xs"
-                  disabled={isLoading}
-                >
-                  Super Admin
-                </Button>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => handleQuickLogin("hod.cse@university.edu")}
-                  className="text-xs"
-                  disabled={isLoading}
-                >
-                  HOD
-                </Button>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => handleQuickLogin("lecturer1@university.edu")}
-                  className="text-xs"
-                  disabled={isLoading}
-                >
-                  Lecturer
-                </Button>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => handleQuickLogin("student1@university.edu")}
-                  className="text-xs"
-                  disabled={isLoading}
-                >
-                  Student
-                </Button>
+              <div className="grid grid-cols-3 gap-2 sm:grid-cols-5">
+                {REGISTER_ROLES.map((r) => (
+                  <Button
+                    key={r.path}
+                    variant="outline"
+                    size="sm"
+                    className="text-xs"
+                    onClick={() => navigate(r.path)}
+                    disabled={isLoading}
+                  >
+                    {r.label}
+                  </Button>
+                ))}
               </div>
             </div>
+
           </CardContent>
         </Card>
 

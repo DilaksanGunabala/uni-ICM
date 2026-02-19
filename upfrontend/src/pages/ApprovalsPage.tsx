@@ -56,7 +56,7 @@ export function ApprovalsPage() {
       const mappedMarks: MarkData[] = response.items.map((m: BackendMark) => ({
         id: m.id.toString(),
         markId: m.id,
-        studentId: m.student_id || 'N/A',
+        studentId: m.student_student_id || 'N/A',
         studentName: m.student_name || 'Unknown Student',
         subjectCode: m.subject_code || 'N/A',
         subjectName: m.subject_name || 'Unknown Subject',
@@ -64,8 +64,8 @@ export function ApprovalsPage() {
         marks: m.marks_obtained,
         maxMarks: m.max_marks || 100,
         status: statusMap[m.status] || 'pending',
-        uploadedBy: m.submitted_by_name || 'Unknown',
-        uploadedAt: new Date(m.created_at).toLocaleDateString(),
+        uploadedBy: m.submitter_name || 'Unknown',
+        uploadedAt: new Date(m.submitted_at).toLocaleDateString(),
       }));
 
       setMarks(mappedMarks);

@@ -29,6 +29,7 @@ import {
   Calendar,
 } from "lucide-react";
 import api, { getApiErrorMessage } from "@/lib/api";
+import { isValidStudentEmail, STUDENT_EMAIL_HINT } from "@/lib/emailValidation";
 
 interface PublicDepartment {
   id: number;
@@ -78,6 +79,8 @@ export function RegisterPage() {
     if (!formData.first_name.trim()) return "First name is required";
     if (!formData.last_name.trim()) return "Last name is required";
     if (!formData.email.trim()) return "Email is required";
+    if (!isValidStudentEmail(formData.email))
+      return `Invalid email format. ${STUDENT_EMAIL_HINT}`;
     if (!formData.student_id.trim()) return "Student ID is required";
     if (!formData.department_id) return "Please select a department";
     if (!formData.batch) return "Please select a batch year";
@@ -201,7 +204,7 @@ export function RegisterPage() {
                   <Input
                     id="email"
                     type="email"
-                    placeholder="you@university.edu"
+                    placeholder="2020E187@eng.jfn.ac.lk"
                     value={formData.email}
                     onChange={(e) => handleChange("email", e.target.value)}
                     className="pl-10"

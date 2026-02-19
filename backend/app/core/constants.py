@@ -4,8 +4,10 @@ from enum import Enum
 class Role(str, Enum):
     """User roles in the system"""
     SUPER_ADMIN = "SUPER_ADMIN"
+    DEAN = "DEAN"
     HOD = "HOD"
     LECTURER = "LECTURER"
+    INSTRUCTOR = "INSTRUCTOR"
     STUDENT = "STUDENT"
 
 

@@ -5,7 +5,7 @@ import { toast } from 'sonner';
 import { AxiosError } from 'axios';
 
 // Map backend roles to frontend UserRole type
-export type UserRole = 'super_admin' | 'hod' | 'lecturer' | 'student';
+export type UserRole = 'super_admin' | 'dean' | 'hod' | 'lecturer' | 'instructor' | 'student';
 
 export interface User {
   id: string;
@@ -39,8 +39,10 @@ function convertBackendUser(backendUser: BackendUser): User {
   // Map backend role names to frontend format
   const roleMap: Record<string, UserRole> = {
     'SUPER_ADMIN': 'super_admin',
+    'DEAN': 'dean',
     'HOD': 'hod',
     'LECTURER': 'lecturer',
+    'INSTRUCTOR': 'instructor',
     'STUDENT': 'student',
   };
 

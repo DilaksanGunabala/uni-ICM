@@ -21,8 +21,6 @@ import {
   Filter,
   Building2,
   Users,
-  BookOpen,
-  GraduationCap,
   LayoutGrid,
   List,
   MoreVertical,
@@ -120,10 +118,9 @@ export function DepartmentsPage() {
         hodId: d.hod_id || null,
         hodName: d.hod_name || "Not Assigned",
         isActive: d.is_active,
-        // These could be fetched from additional API calls if available
-        subjectsCount: Math.floor(Math.random() * 20) + 5, // Placeholder
-        studentsCount: Math.floor(Math.random() * 200) + 50, // Placeholder
-        lecturersCount: Math.floor(Math.random() * 15) + 3, // Placeholder
+        subjectsCount: undefined,
+        studentsCount: undefined,
+        lecturersCount: undefined,
       }));
 
       setDepartments(mappedDepartments);
@@ -598,24 +595,6 @@ export function DepartmentsPage() {
                     </div>
                   </div>
 
-                  {/* Stats */}
-                  <div className="grid grid-cols-3 gap-2">
-                    <div className="text-center p-2 bg-muted/30 rounded-lg">
-                      <BookOpen className="h-4 w-4 text-blue-500 mx-auto mb-1" />
-                      <p className="text-lg font-bold">{dept.subjectsCount || 0}</p>
-                      <p className="text-xs text-muted-foreground">Subjects</p>
-                    </div>
-                    <div className="text-center p-2 bg-muted/30 rounded-lg">
-                      <GraduationCap className="h-4 w-4 text-green-500 mx-auto mb-1" />
-                      <p className="text-lg font-bold">{dept.studentsCount || 0}</p>
-                      <p className="text-xs text-muted-foreground">Students</p>
-                    </div>
-                    <div className="text-center p-2 bg-muted/30 rounded-lg">
-                      <Users className="h-4 w-4 text-purple-500 mx-auto mb-1" />
-                      <p className="text-lg font-bold">{dept.lecturersCount || 0}</p>
-                      <p className="text-xs text-muted-foreground">Lecturers</p>
-                    </div>
-                  </div>
                 </CardContent>
 
                 <CardFooter className="pt-0">

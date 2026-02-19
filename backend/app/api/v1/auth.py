@@ -14,7 +14,8 @@ from app.schemas.auth import (
     UserResponse,
     ProfileUpdateRequest,
     PasswordChangeRequest,
-    RegisterRequest
+    RegisterRequest,
+    StaffRegisterRequest,
 )
 from app.models.role import Role
 from app.core.security import verify_password, create_access_token, get_password_hash
@@ -109,6 +110,70 @@ async def get_departments_for_registration(db: AsyncSession = Depends(get_db)):
         {"id": d.id, "code": d.code, "name": d.name}
         for d in departments
     ]
+
+
+@router.post("/register/staff", status_code=status.HTTP_201_CREATED)
+async def register_staff(data: StaffRegisterRequest, db: AsyncSession = Depends(get_db)):
+    """
+    Register a new staff account (Dean, HOD, Lecturer, Instructor).
+    Account is created as INACTIVE — admin must activate before the user can log in.
+    """
+    if data.password != data.confirm_password:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Passwords do not match"
+        )
+    if len(data.password) < 6:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Password must be at least 6 characters"
+        )
+
+    # Check email uniqueness
+    result = await db.execute(select(User).where(User.email == data.email))
+    if result.scalars().first():
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Email already registered"
+        )
+
+    # Check employee_id uniqueness
+    result = await db.execute(select(User).where(User.employee_id == data.employee_id))
+    if result.scalars().first():
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Employee ID already registered"
+        )
+
+    # Fetch the role from the DB
+    result = await db.execute(select(Role).where(Role.name == data.role_name))
+    role = result.scalars().first()
+    if not role:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Role '{data.role_name}' not found in system"
+        )
+
+    # Create user as INACTIVE — pending admin approval
+    new_user = User(
+        email=data.email,
+        password_hash=get_password_hash(data.password),
+        first_name=data.first_name,
+        last_name=data.last_name,
+        employee_id=data.employee_id,
+        role_id=role.id,
+        department_id=data.department_id,
+        is_active=False,
+    )
+
+    db.add(new_user)
+    await db.commit()
+
+    return {
+        "message": "Registration submitted. Your account is pending approval by the administrator.",
+        "email": data.email,
+        "role": data.role_name,
+    }
 
 
 @router.post("/register", response_model=TokenResponse)
