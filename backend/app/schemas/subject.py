@@ -84,6 +84,8 @@ class SubjectWithDetails(SubjectResponse):
     department_name: Optional[str] = None
     department_code: Optional[str] = None
     coordinator_name: Optional[str] = None
+    lecturer_id: Optional[int] = None
+    lecturer_name: Optional[str] = None
 
     class Config:
         from_attributes = True

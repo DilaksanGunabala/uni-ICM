@@ -1,6 +1,6 @@
 import { cn } from "@/lib/utils";
 import { UserRole } from "@/types";
-import { Shield, GraduationCap, BookOpen, User } from "lucide-react";
+import { Shield, GraduationCap, BookOpen, User, Star, Briefcase } from "lucide-react";
 
 interface RoleBadgeProps {
   role: UserRole;
@@ -14,6 +14,11 @@ const roleConfig: Record<UserRole, { label: string; className: string; icon: typ
     className: 'bg-primary text-primary-foreground',
     icon: Shield,
   },
+  dean: {
+    label: 'Dean',
+    className: 'bg-violet-600 text-white',
+    icon: Star,
+  },
   hod: {
     label: 'HOD',
     className: 'bg-primary/80 text-primary-foreground',
@@ -23,6 +28,11 @@ const roleConfig: Record<UserRole, { label: string; className: string; icon: typ
     label: 'Lecturer',
     className: 'bg-primary/60 text-primary-foreground',
     icon: BookOpen,
+  },
+  instructor: {
+    label: 'Instructor',
+    className: 'bg-primary/40 text-primary-foreground',
+    icon: Briefcase,
   },
   student: {
     label: 'Student',

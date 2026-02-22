@@ -42,11 +42,10 @@ export function LoginPage() {
       const success = await login(email, password);
       if (success) {
         navigate("/dashboard");
-      } else {
-        setError("Invalid credentials. Please try again.");
       }
+      // AuthContext already shows a toast with the real error message (e.g. "Account is inactive")
     } catch (err) {
-      setError("Invalid credentials. Please try again.");
+      setError("An unexpected error occurred. Please try again.");
     } finally {
       setIsLoading(false);
     }

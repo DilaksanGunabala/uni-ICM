@@ -62,11 +62,12 @@ import {
   CheckCircle,
   XCircle,
   RefreshCw,
+  AlertCircle,
 } from "lucide-react";
 
 // Mark display type for the table
 interface MarkDisplay {
-  id: number;
+  id: string;
   studentId: string;
   studentName: string;
   subjectCode: string;
@@ -110,6 +111,9 @@ export function MarksPage() {
   const { user } = useAuth();
   const { toast } = useToast();
 
+  // Lecturer/Instructor use a simplified subject-first flow
+  const isLecturerRole = user?.role === "lecturer" || user?.role === "instructor";
+
   // Selection state - hierarchical
   const [selectedDepartment, setSelectedDepartment] = useState<number | null>(null);
   const [selectedSemester, setSelectedSemester] = useState<number | string | null>(null);
@@ -119,12 +123,14 @@ export function MarksPage() {
   // Data state
   const [departments, setDepartments] = useState<Department[]>([]);
   const [subjects, setSubjects] = useState<Subject[]>([]);
+  const [mySubjects, setMySubjects] = useState<Subject[]>([]); // for lecturer/instructor
   const [marks, setMarks] = useState<MarkDisplay[]>([]);
   const [assessments, setAssessments] = useState<Assessment[]>([]);
   const [availableBatches, setAvailableBatches] = useState<string[]>([]);
 
   // Loading states
-  const [loadingDepartments, setLoadingDepartments] = useState(true);
+  const [loadingDepartments, setLoadingDepartments] = useState(false);
+  const [loadingMySubjects, setLoadingMySubjects] = useState(false);
   const [loadingSubjects, setLoadingSubjects] = useState(false);
   const [loadingMarks, setLoadingMarks] = useState(false);
   const [loadingBatches, setLoadingBatches] = useState(false);
@@ -133,8 +139,20 @@ export function MarksPage() {
   const [isUploadDialogOpen, setIsUploadDialogOpen] = useState(false);
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
   const [isAddMarkDialogOpen, setIsAddMarkDialogOpen] = useState(false);
+  const [isCreateAssessmentDialogOpen, setIsCreateAssessmentDialogOpen] = useState(false);
   const [selectedMark, setSelectedMark] = useState<MarkDisplay | null>(null);
   const [saving, setSaving] = useState(false);
+
+  // Create assessment form
+  const [assessmentForm, setAssessmentForm] = useState({
+    name: "",
+    assessment_type: "",
+    max_marks: "",
+    academic_year: new Date().getFullYear().toString(),
+    weightage: "",
+    assessment_date: "",
+    description: "",
+  });
 
   // Upload state
   const [uploadFile, setUploadFile] = useState<File | null>(null);
@@ -151,13 +169,18 @@ export function MarksPage() {
     remarks: "",
   });
 
-  const canEdit = user?.role === "lecturer" || user?.role === "super_admin";
+  const canEdit = user?.role === "lecturer" || user?.role === "instructor" || user?.role === "super_admin";
   const canDelete = user?.role === "super_admin";
   const canApprove = user?.role === "hod" || user?.role === "super_admin";
 
-  // Fetch departments on mount
+  // On mount: lecturer loads their assigned subjects; others load departments
   useEffect(() => {
-    fetchDepartments();
+    if (isLecturerRole) {
+      fetchMySubjects();
+    } else {
+      setLoadingDepartments(true);
+      fetchDepartments();
+    }
   }, []);
 
   // Fetch subjects when department and semester are selected
@@ -207,6 +230,22 @@ export function MarksPage() {
       });
     } finally {
       setLoadingDepartments(false);
+    }
+  };
+
+  const fetchMySubjects = async () => {
+    try {
+      setLoadingMySubjects(true);
+      const data = await api.getMyAssignedSubjects();
+      setMySubjects(data);
+    } catch (error: unknown) {
+      toast({
+        title: "Error",
+        description: getApiErrorMessage(error, "Failed to load your assigned subjects"),
+        variant: "destructive",
+      });
+    } finally {
+      setLoadingMySubjects(false);
     }
   };
 
@@ -272,6 +311,48 @@ export function MarksPage() {
     }
   };
 
+  const handleCreateAssessment = async () => {
+    if (!selectedSubject || !assessmentForm.name || !assessmentForm.assessment_type || !assessmentForm.max_marks) {
+      toast({
+        title: "Validation Error",
+        description: "Please fill in all required fields",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    try {
+      setSaving(true);
+      await api.createAssessment({
+        subject_id: selectedSubject,
+        name: assessmentForm.name,
+        assessment_type: assessmentForm.assessment_type,
+        max_marks: parseFloat(assessmentForm.max_marks),
+        academic_year: assessmentForm.academic_year,
+        weightage: assessmentForm.weightage ? parseFloat(assessmentForm.weightage) : undefined,
+        assessment_date: assessmentForm.assessment_date || undefined,
+        description: assessmentForm.description || undefined,
+      });
+
+      toast({
+        title: "Assessment Created",
+        description: `"${assessmentForm.name}" has been created successfully.`,
+      });
+
+      setIsCreateAssessmentDialogOpen(false);
+      setAssessmentForm({ name: "", assessment_type: "", max_marks: "", academic_year: new Date().getFullYear().toString(), weightage: "", assessment_date: "", description: "" });
+      await fetchAssessments();
+    } catch (error: unknown) {
+      toast({
+        title: "Error",
+        description: getApiErrorMessage(error, "Failed to create assessment"),
+        variant: "destructive",
+      });
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const fetchMarks = async () => {
     if (!selectedSubject || !selectedBatch) return;
 
@@ -284,7 +365,7 @@ export function MarksPage() {
       });
 
       const mappedMarks: MarkDisplay[] = response.items.map((m: BackendMark) => ({
-        id: m.id,
+        id: String(m.id),
         studentId: m.student_student_id || `STU-${m.student_id}`,
         studentName: m.student_name || "Unknown Student",
         subjectCode: m.subject_code || "",
@@ -314,10 +395,10 @@ export function MarksPage() {
     }
   };
 
-  const handleApproveMark = async (markId: number) => {
+  const handleApproveMark = async (markId: string) => {
     try {
       setSaving(true);
-      await api.approveMark(markId);
+      await api.approveMark(parseInt(markId));
       toast({
         title: "Mark Approved",
         description: "The mark has been approved successfully.",
@@ -334,10 +415,10 @@ export function MarksPage() {
     }
   };
 
-  const handleRejectMark = async (markId: number) => {
+  const handleRejectMark = async (markId: string) => {
     try {
       setSaving(true);
-      await api.rejectMark(markId, "Rejected by reviewer");
+      await api.rejectMark(parseInt(markId), "Rejected by reviewer");
       toast({
         title: "Mark Rejected",
         description: "The mark has been rejected.",
@@ -565,7 +646,7 @@ export function MarksPage() {
 
     try {
       setSaving(true);
-      await api.deleteMark(selectedMark.id);
+      await api.deleteMark(parseInt(selectedMark.id));
       toast({
         title: "Mark Deleted",
         description: "The mark entry has been deleted.",
@@ -608,12 +689,16 @@ export function MarksPage() {
     }
   };
 
+  // Subject name lookup works for both lecturer (mySubjects) and others (subjects)
+  const getSubjectById = (id: number) =>
+    [...subjects, ...mySubjects].find((s) => s.id === id);
+
   const getSelectedDepartmentName = () => {
     return departments.find((d) => d.id === selectedDepartment)?.name || "";
   };
 
   const getSelectedSubjectName = () => {
-    const subject = subjects.find((s) => s.id === selectedSubject);
+    const subject = getSubjectById(selectedSubject!);
     return subject ? `${subject.code} - ${subject.name}` : "";
   };
 
@@ -731,25 +816,17 @@ export function MarksPage() {
   // Render breadcrumb trail
   const renderBreadcrumbs = () => {
     const crumbs = [{ label: "Marks Management" }];
-
-    if (selectedDepartment) {
-      crumbs.push({ label: getSelectedDepartmentName() });
+    if (!isLecturerRole) {
+      if (selectedDepartment) crumbs.push({ label: getSelectedDepartmentName() });
+      if (selectedSemester) crumbs.push({ label: selectedSemester === "GES" ? "GES" : `Semester ${selectedSemester}` });
     }
-    if (selectedSemester) {
-      crumbs.push({ label: selectedSemester === "GES" ? "GES" : `Semester ${selectedSemester}` });
-    }
-    if (selectedSubject) {
-      crumbs.push({ label: getSelectedSubjectName() });
-    }
-    if (selectedBatch) {
-      crumbs.push({ label: `Batch ${selectedBatch}` });
-    }
-
+    if (selectedSubject) crumbs.push({ label: getSelectedSubjectName() });
+    if (selectedBatch) crumbs.push({ label: `Batch ${selectedBatch}` });
     return crumbs;
   };
 
-  // Loading state
-  if (loadingDepartments) {
+  // Loading gate for non-lecturers waiting on departments
+  if (!isLecturerRole && loadingDepartments) {
     return (
       <div className="flex items-center justify-center h-64">
         <Loader2 className="h-8 w-8 animate-spin text-primary" />
@@ -761,7 +838,11 @@ export function MarksPage() {
     <div>
       <PageHeader
         title="Marks Management"
-        description="Select department, semester, subject, and batch to view marks"
+        description={
+          isLecturerRole
+            ? "Select one of your assigned subjects to view and upload marks"
+            : "Select department, semester, subject, and batch to view marks"
+        }
         breadcrumbs={renderBreadcrumbs()}
         actions={
           selectedSubject && selectedBatch ? (
@@ -791,8 +872,55 @@ export function MarksPage() {
         }
       />
 
+      {/* ── LECTURER / INSTRUCTOR FLOW ── */}
+      {isLecturerRole && !selectedSubject && (
+        <div className="space-y-4">
+          <div className="flex items-center gap-2 text-lg font-medium">
+            <BookOpen className="h-5 w-5 text-primary" />
+            <span>Your Assigned Subjects</span>
+          </div>
+          {loadingMySubjects ? (
+            <div className="flex items-center justify-center h-32">
+              <Loader2 className="h-6 w-6 animate-spin text-primary" />
+            </div>
+          ) : mySubjects.length === 0 ? (
+            <Card className="p-8 text-center">
+              <p className="text-muted-foreground">
+                No subjects are currently assigned to you. Please contact the administrator.
+              </p>
+            </Card>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              {mySubjects.map((subject) => (
+                <Card
+                  key={subject.id}
+                  className="cursor-pointer hover:border-primary transition-colors"
+                  onClick={() => setSelectedSubject(subject.id)}
+                >
+                  <CardHeader className="pb-2">
+                    <CardTitle className="flex items-center justify-between">
+                      <span>{subject.code}</span>
+                      <ChevronRight className="h-5 w-5 text-muted-foreground" />
+                    </CardTitle>
+                    <CardDescription>{subject.name}</CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="flex items-center justify-between text-sm text-muted-foreground">
+                      <span>Credits: {subject.credits}</span>
+                      {subject.department_name && <span>{subject.department_name}</span>}
+                    </div>
+                  </CardContent>
+                </Card>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ── ADMIN / HOD / DEAN FLOW ── */}
+
       {/* Step 1: Select Department */}
-      {!selectedDepartment && (
+      {!isLecturerRole && !selectedDepartment && (
         <div className="space-y-4">
           <div className="flex items-center gap-2 text-lg font-medium">
             <Building2 className="h-5 w-5 text-primary" />
@@ -939,8 +1067,8 @@ export function MarksPage() {
         </div>
       )}
 
-      {/* Step 4: Select Batch */}
-      {((selectedSemester === "GES") || (selectedDepartment && selectedSemester)) && selectedSubject && !selectedBatch && (
+      {/* Step 4 (shared): Select Batch — shown after any subject is selected */}
+      {selectedSubject && !selectedBatch && (
         <div className="space-y-4">
           <Button variant="ghost" onClick={() => resetSelection("subject")} className="mb-2">
             <ArrowLeft className="mr-2 h-4 w-4" />
@@ -948,7 +1076,7 @@ export function MarksPage() {
           </Button>
           <div className="flex items-center gap-2 text-lg font-medium">
             <Users className="h-5 w-5 text-primary" />
-            <span>Step 4: Select Batch</span>
+            <span>{isLecturerRole ? "Step 2" : "Step 4"}: Select Batch</span>
             <span className="text-muted-foreground text-sm ml-2">({getSelectedSubjectName()})</span>
           </div>
 
@@ -975,8 +1103,8 @@ export function MarksPage() {
         </div>
       )}
 
-      {/* Step 5: Show Marks Table */}
-      {((selectedSemester === "GES") || (selectedDepartment && selectedSemester)) && selectedSubject && selectedBatch && (
+      {/* Step 5 (shared): Show Marks Table — shown after subject + batch selected */}
+      {selectedSubject && selectedBatch && (
         <div className="space-y-4">
           <div className="flex items-center gap-2">
             <Button variant="ghost" onClick={() => resetSelection("batch")}>
@@ -985,14 +1113,18 @@ export function MarksPage() {
             </Button>
             <div className="flex-1" />
             <div className="flex items-center gap-2 px-3 py-1 bg-muted rounded-lg text-sm">
-              {selectedSemester !== "GES" && (
+              {!isLecturerRole && selectedSemester !== "GES" && (
                 <>
                   <span className="font-medium">{getSelectedDepartmentName()}</span>
                   <ChevronRight className="h-4 w-4 text-muted-foreground" />
                 </>
               )}
-              <span>{selectedSemester === "GES" ? "GES" : `Sem ${selectedSemester}`}</span>
-              <ChevronRight className="h-4 w-4 text-muted-foreground" />
+              {!isLecturerRole && (
+                <>
+                  <span>{selectedSemester === "GES" ? "GES" : `Sem ${selectedSemester}`}</span>
+                  <ChevronRight className="h-4 w-4 text-muted-foreground" />
+                </>
+              )}
               <span>{getSelectedSubjectName()}</span>
               <ChevronRight className="h-4 w-4 text-muted-foreground" />
               <span className="font-medium text-primary">{selectedBatch}</span>
@@ -1036,18 +1168,41 @@ export function MarksPage() {
           <div className="space-y-4 py-4">
             <div className="space-y-2">
               <Label>Assessment</Label>
-              <Select value={uploadAssessmentId} onValueChange={setUploadAssessmentId}>
-                <SelectTrigger>
-                  <SelectValue placeholder="Select assessment" />
-                </SelectTrigger>
-                <SelectContent className="bg-popover">
-                  {assessments.map((assessment) => (
-                    <SelectItem key={assessment.id} value={assessment.id.toString()}>
-                      {assessment.name} ({assessment.assessment_type})
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              {assessments.length === 0 ? (
+                <div className="flex flex-col items-center gap-3 rounded-lg border border-dashed p-4 text-center">
+                  <AlertCircle className="h-6 w-6 text-muted-foreground" />
+                  <div>
+                    <p className="text-sm font-medium">No assessments found</p>
+                    <p className="text-xs text-muted-foreground">Please create an assessment first before uploading marks.</p>
+                  </div>
+                  {canEdit && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => {
+                        setIsUploadDialogOpen(false);
+                        setIsCreateAssessmentDialogOpen(true);
+                      }}
+                    >
+                      <Plus className="mr-2 h-3.5 w-3.5" />
+                      Create Assessment
+                    </Button>
+                  )}
+                </div>
+              ) : (
+                <Select value={uploadAssessmentId} onValueChange={setUploadAssessmentId}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select assessment" />
+                  </SelectTrigger>
+                  <SelectContent className="bg-popover">
+                    {assessments.map((assessment) => (
+                      <SelectItem key={assessment.id} value={assessment.id.toString()}>
+                        {assessment.name} ({assessment.assessment_type})
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              )}
             </div>
             <div className="space-y-2">
               <Label>Upload File</Label>
@@ -1114,21 +1269,44 @@ export function MarksPage() {
             </div>
             <div className="space-y-2">
               <Label htmlFor="assessment">Assessment *</Label>
-              <Select
-                value={markForm.assessment_id}
-                onValueChange={(value) => setMarkForm({ ...markForm, assessment_id: value })}
-              >
-                <SelectTrigger>
-                  <SelectValue placeholder="Select assessment" />
-                </SelectTrigger>
-                <SelectContent className="bg-popover">
-                  {assessments.map((assessment) => (
-                    <SelectItem key={assessment.id} value={assessment.id.toString()}>
-                      {assessment.name} ({assessment.assessment_type}) - Max: {assessment.max_marks}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              {assessments.length === 0 ? (
+                <div className="flex flex-col items-center gap-3 rounded-lg border border-dashed p-4 text-center">
+                  <AlertCircle className="h-6 w-6 text-muted-foreground" />
+                  <div>
+                    <p className="text-sm font-medium">No assessments found</p>
+                    <p className="text-xs text-muted-foreground">Please create an assessment first before adding marks.</p>
+                  </div>
+                  {canEdit && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => {
+                        setIsAddMarkDialogOpen(false);
+                        setIsCreateAssessmentDialogOpen(true);
+                      }}
+                    >
+                      <Plus className="mr-2 h-3.5 w-3.5" />
+                      Create Assessment
+                    </Button>
+                  )}
+                </div>
+              ) : (
+                <Select
+                  value={markForm.assessment_id}
+                  onValueChange={(value) => setMarkForm({ ...markForm, assessment_id: value })}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select assessment" />
+                  </SelectTrigger>
+                  <SelectContent className="bg-popover">
+                    {assessments.map((assessment) => (
+                      <SelectItem key={assessment.id} value={assessment.id.toString()}>
+                        {assessment.name} ({assessment.assessment_type}) - Max: {assessment.max_marks}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              )}
             </div>
             <div className="space-y-2">
               <Label htmlFor="marks">Marks Obtained *</Label>
@@ -1157,6 +1335,113 @@ export function MarksPage() {
             <Button onClick={handleAddMark} disabled={saving}>
               {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
               Add Mark
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Create Assessment Dialog */}
+      <Dialog
+        open={isCreateAssessmentDialogOpen}
+        onOpenChange={(open) => {
+          setIsCreateAssessmentDialogOpen(open);
+          if (!open) {
+            setAssessmentForm({ name: "", assessment_type: "", max_marks: "", academic_year: new Date().getFullYear().toString(), weightage: "", assessment_date: "", description: "" });
+          }
+        }}
+      >
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Create Assessment</DialogTitle>
+            <DialogDescription>
+              Create a new assessment for {getSelectedSubjectName()}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <div className="space-y-2">
+              <Label htmlFor="assessment_name">Assessment Name *</Label>
+              <Input
+                id="assessment_name"
+                value={assessmentForm.name}
+                onChange={(e) => setAssessmentForm({ ...assessmentForm, name: e.target.value })}
+                placeholder="e.g. Quiz 1, Assignment 2"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="assessment_type">Assessment Type *</Label>
+              <Select
+                value={assessmentForm.assessment_type}
+                onValueChange={(value) => setAssessmentForm({ ...assessmentForm, assessment_type: value })}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Select type" />
+                </SelectTrigger>
+                <SelectContent className="bg-popover">
+                  {["INTERNAL", "ASSIGNMENT", "PROJECT", "FINAL_EXAM", "MIDTERM", "QUIZ", "LAB", "OTHER"].map((t) => (
+                    <SelectItem key={t} value={t}>{t.replace("_", " ")}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-2">
+                <Label htmlFor="max_marks">Max Marks *</Label>
+                <Input
+                  id="max_marks"
+                  type="number"
+                  value={assessmentForm.max_marks}
+                  onChange={(e) => setAssessmentForm({ ...assessmentForm, max_marks: e.target.value })}
+                  placeholder="e.g. 100"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="weightage">Weightage (%)</Label>
+                <Input
+                  id="weightage"
+                  type="number"
+                  value={assessmentForm.weightage}
+                  onChange={(e) => setAssessmentForm({ ...assessmentForm, weightage: e.target.value })}
+                  placeholder="e.g. 20"
+                />
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-2">
+                <Label htmlFor="academic_year">Academic Year *</Label>
+                <Input
+                  id="academic_year"
+                  value={assessmentForm.academic_year}
+                  onChange={(e) => setAssessmentForm({ ...assessmentForm, academic_year: e.target.value })}
+                  placeholder="e.g. 2025"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="assessment_date">Date</Label>
+                <Input
+                  id="assessment_date"
+                  type="date"
+                  value={assessmentForm.assessment_date}
+                  onChange={(e) => setAssessmentForm({ ...assessmentForm, assessment_date: e.target.value })}
+                />
+              </div>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="description">Description</Label>
+              <Input
+                id="description"
+                value={assessmentForm.description}
+                onChange={(e) => setAssessmentForm({ ...assessmentForm, description: e.target.value })}
+                placeholder="Optional description"
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setIsCreateAssessmentDialogOpen(false)} disabled={saving}>
+              Cancel
+            </Button>
+            <Button onClick={handleCreateAssessment} disabled={saving}>
+              {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              Create Assessment
             </Button>
           </DialogFooter>
         </DialogContent>

@@ -7,7 +7,7 @@ from datetime import datetime
 
 from app.database import get_db
 from app.middleware.auth import get_current_user
-from app.middleware.rbac import require_permission
+from app.middleware.rbac import require_permission, require_any_permission
 from app.models.user import User
 from app.models.department import Department
 from app.models.subject import Subject, SubjectAssignment
@@ -46,7 +46,8 @@ async def get_subjects(
     """
     stmt = select(Subject).options(
         selectinload(Subject.department),
-        selectinload(Subject.coordinator)
+        selectinload(Subject.coordinator),
+        selectinload(Subject.subject_assignments).selectinload(SubjectAssignment.lecturer)
     )
 
     # Apply filters
@@ -78,6 +79,7 @@ async def get_subjects(
     # Build response
     items = []
     for subject in paginated["items"]:
+        current_assignment = subject.subject_assignments[0] if subject.subject_assignments else None
         subject_data = SubjectWithDetails(
             id=subject.id,
             code=subject.code,
@@ -92,7 +94,9 @@ async def get_subjects(
             updated_at=subject.updated_at,
             department_name=subject.department.name if subject.department else None,
             department_code=subject.department.code if subject.department else None,
-            coordinator_name=subject.coordinator.full_name if subject.coordinator else None
+            coordinator_name=subject.coordinator.full_name if subject.coordinator else None,
+            lecturer_id=current_assignment.lecturer_id if current_assignment else None,
+            lecturer_name=current_assignment.lecturer.full_name if current_assignment and current_assignment.lecturer else None
         )
         items.append(subject_data)
 
@@ -114,7 +118,8 @@ async def get_subject(
     result = await db.execute(
         select(Subject).options(
             selectinload(Subject.department),
-            selectinload(Subject.coordinator)
+            selectinload(Subject.coordinator),
+            selectinload(Subject.subject_assignments).selectinload(SubjectAssignment.lecturer)
         ).where(Subject.id == subject_id)
     )
     subject = result.scalars().first()
@@ -125,6 +130,7 @@ async def get_subject(
             detail="Subject not found"
         )
 
+    current_assignment = subject.subject_assignments[0] if subject.subject_assignments else None
     return SubjectWithDetails(
         id=subject.id,
         code=subject.code,
@@ -139,7 +145,9 @@ async def get_subject(
         updated_at=subject.updated_at,
         department_name=subject.department.name if subject.department else None,
         department_code=subject.department.code if subject.department else None,
-        coordinator_name=subject.coordinator.full_name if subject.coordinator else None
+        coordinator_name=subject.coordinator.full_name if subject.coordinator else None,
+        lecturer_id=current_assignment.lecturer_id if current_assignment else None,
+        lecturer_name=current_assignment.lecturer.full_name if current_assignment and current_assignment.lecturer else None
     )
 
 
@@ -216,12 +224,13 @@ async def update_subject(
     subject_id: int,
     subject_data: SubjectUpdate,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_permission(Permission.MANAGE_SUBJECTS))
+    current_user: User = Depends(require_any_permission([Permission.MANAGE_SUBJECTS, Permission.ASSIGN_SUBJECTS]))
 ):
     """
-    Update a subject (Super Admin only).
+    Update a subject.
 
-    Requires: MANAGE_SUBJECTS permission
+    - SUPER_ADMIN (MANAGE_SUBJECTS): can update all fields including coordinator
+    - HOD (ASSIGN_SUBJECTS): can only update coordinator_id for subjects in their department
     """
     result = await db.execute(select(Subject).where(Subject.id == subject_id))
     subject = result.scalars().first()
@@ -232,6 +241,43 @@ async def update_subject(
             detail="Subject not found"
         )
 
+    role_name = current_user.role.name
+
+    # HOD path: only coordinator_id changes allowed, dept-scoped
+    if role_name != "SUPER_ADMIN":
+        # SPECIAL subjects: HOD may only manage their own department's subjects
+        if subject.department_id is not None and subject.department_id != current_user.department_id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="You can only manage assignments for your own department's subjects"
+            )
+        # Only apply coordinator_id; ignore all other fields
+        if 'coordinator_id' in subject_data.model_fields_set:
+            if subject_data.coordinator_id is not None:
+                coord_result = await db.execute(select(User).where(User.id == subject_data.coordinator_id))
+                if not coord_result.scalars().first():
+                    raise HTTPException(
+                        status_code=status.HTTP_404_NOT_FOUND,
+                        detail="Coordinator not found"
+                    )
+            subject.coordinator_id = subject_data.coordinator_id
+        await db.commit()
+        await db.refresh(subject)
+        return SubjectResponse(
+            id=subject.id,
+            code=subject.code,
+            name=subject.name,
+            department_id=subject.department_id,
+            coordinator_id=subject.coordinator_id,
+            semester_type=subject.semester_type,
+            semester=subject.semester,
+            credits=subject.credits,
+            is_active=subject.is_active,
+            created_at=subject.created_at,
+            updated_at=subject.updated_at
+        )
+
+    # SUPER_ADMIN path: full update
     # Update fields if provided
     if subject_data.code is not None:
         result = await db.execute(
@@ -388,33 +434,43 @@ async def assign_lecturer_to_subject(
     subject_id: int,
     assignment_data: LecturerAssignmentCreate,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_permission(Permission.MANAGE_SUBJECTS))
+    current_user: User = Depends(require_permission(Permission.ASSIGN_SUBJECTS))
 ):
     """
-    Assign a lecturer to a subject for a specific academic year (Super Admin only).
+    Assign a lecturer to a subject for a specific academic year.
 
-    Requires: MANAGE_SUBJECTS permission
+    - SUPER_ADMIN: can assign to any subject
+    - HOD: can assign only to their own department's subjects (SPECIAL) or any GENERAL/GES subject
     """
     # Verify subject exists
     result = await db.execute(select(Subject).where(Subject.id == subject_id))
-    if not result.scalars().first():
+    subject = result.scalars().first()
+    if not subject:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Subject not found"
         )
 
-    # Verify lecturer exists and is a lecturer
+    # HOD dept-scope check
+    if current_user.role.name == "HOD":
+        if subject.department_id is not None and subject.department_id != current_user.department_id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="You can only assign lecturers to your own department's subjects"
+            )
+
+    # Verify lecturer exists and is a LECTURER or INSTRUCTOR
     from app.models.role import Role
     result = await db.execute(
         select(User).join(Role).where(
             User.id == assignment_data.lecturer_id,
-            Role.name == "LECTURER"
+            Role.name.in_(["LECTURER", "INSTRUCTOR"])
         )
     )
     if not result.scalars().first():
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Lecturer not found or user is not a lecturer"
+            detail="User not found or is not a Lecturer/Instructor"
         )
 
     # Check if assignment already exists
@@ -469,15 +525,18 @@ async def remove_lecturer_assignment(
     subject_id: int,
     assignment_id: int,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_permission(Permission.MANAGE_SUBJECTS))
+    current_user: User = Depends(require_permission(Permission.ASSIGN_SUBJECTS))
 ):
     """
-    Remove a lecturer assignment from a subject (Super Admin only).
+    Remove a lecturer assignment from a subject.
 
-    Requires: MANAGE_SUBJECTS permission
+    - SUPER_ADMIN: can remove any assignment
+    - HOD: can only remove assignments for their own department's subjects
     """
     result = await db.execute(
-        select(SubjectAssignment).where(
+        select(SubjectAssignment).options(
+            selectinload(SubjectAssignment.subject)
+        ).where(
             SubjectAssignment.id == assignment_id,
             SubjectAssignment.subject_id == subject_id
         )
@@ -489,6 +548,15 @@ async def remove_lecturer_assignment(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Lecturer assignment not found"
         )
+
+    # HOD dept-scope check
+    if current_user.role.name == "HOD":
+        subject = assignment.subject
+        if subject and subject.department_id is not None and subject.department_id != current_user.department_id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="You can only remove assignments for your own department's subjects"
+            )
 
     await db.delete(assignment)
     await db.commit()
@@ -513,7 +581,8 @@ async def get_my_assigned_subjects(
     """
     stmt = select(Subject).join(SubjectAssignment).options(
         selectinload(Subject.department),
-        selectinload(Subject.coordinator)
+        selectinload(Subject.coordinator),
+        selectinload(Subject.subject_assignments).selectinload(SubjectAssignment.lecturer)
     ).where(
         SubjectAssignment.lecturer_id == current_user.id
     )
@@ -527,6 +596,7 @@ async def get_my_assigned_subjects(
 
     results = []
     for subject in subjects:
+        current_assignment = subject.subject_assignments[0] if subject.subject_assignments else None
         results.append(SubjectWithDetails(
             id=subject.id,
             code=subject.code,
@@ -541,7 +611,9 @@ async def get_my_assigned_subjects(
             updated_at=subject.updated_at,
             department_name=subject.department.name if subject.department else None,
             department_code=subject.department.code if subject.department else None,
-            coordinator_name=subject.coordinator.full_name if subject.coordinator else None
+            coordinator_name=subject.coordinator.full_name if subject.coordinator else None,
+            lecturer_id=current_assignment.lecturer_id if current_assignment else None,
+            lecturer_name=current_assignment.lecturer.full_name if current_assignment and current_assignment.lecturer else None
         ))
 
     return results

@@ -98,7 +98,7 @@ async def get_marks(
             Mark.enrollment.has(Enrollment.student_id == current_user.id),
             Mark.status == MarkStatus.APPROVED
         )
-    elif role_name == "LECTURER":
+    elif role_name in ("LECTURER", "INSTRUCTOR"):
         stmt = stmt.where(Mark.submitted_by == current_user.id)
     elif role_name == "HOD":
         stmt = stmt.where(
@@ -106,7 +106,7 @@ async def get_marks(
                 Enrollment.subject.has(Subject.department_id == current_user.department_id)
             )
         )
-    # SUPER_ADMIN sees all marks (no additional filter)
+    # SUPER_ADMIN and DEAN see all marks (no additional filter)
 
     # Apply additional filters
     if student_id:
@@ -247,7 +247,7 @@ async def get_mark_by_id(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Access denied"
             )
-    elif role_name == "LECTURER":
+    elif role_name in ("LECTURER", "INSTRUCTOR"):
         if mark.submitted_by != current_user.id:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,

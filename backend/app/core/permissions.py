@@ -87,6 +87,7 @@ ROLE_PERMISSIONS: Dict[Role, List[Permission]] = {
         # Department-level authority
         Permission.VIEW_DEPARTMENT,
         Permission.VIEW_SUBJECTS,
+        Permission.ASSIGN_SUBJECTS,   # HOD can assign coordinator/lecturer to subjects
         Permission.VIEW_ALL_ENROLLMENTS,
         Permission.VIEW_DEPARTMENT_MARKS,
         Permission.APPROVE_MARKS,

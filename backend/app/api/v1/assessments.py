@@ -116,8 +116,8 @@ async def create_assessment(
     result = await db.execute(select(Role).where(Role.id == current_user.role_id))
     user_role = result.scalars().first()
 
-    if user_role.name == "LECTURER":
-        # Verify lecturer is assigned to this subject
+    if user_role.name in ("LECTURER", "INSTRUCTOR"):
+        # Verify lecturer/instructor is assigned to this subject
         result = await db.execute(
             select(SubjectAssignment).where(
                 SubjectAssignment.subject_id == assessment_data.subject_id,
@@ -139,7 +139,8 @@ async def create_assessment(
         weightage=assessment_data.weightage,
         assessment_date=assessment_data.assessment_date,
         academic_year=assessment_data.academic_year,
-        description=assessment_data.description
+        description=assessment_data.description,
+        created_by=current_user.id
     )
 
     db.add(new_assessment)
@@ -184,12 +185,12 @@ async def update_assessment(
             detail="Assessment not found"
         )
 
-    # Check if lecturer has permission for this specific subject
+    # Check if lecturer/instructor has permission for this specific subject
     from app.models.role import Role
     result = await db.execute(select(Role).where(Role.id == current_user.role_id))
     user_role = result.scalars().first()
 
-    if user_role.name == "LECTURER":
+    if user_role.name in ("LECTURER", "INSTRUCTOR"):
         result = await db.execute(
             select(SubjectAssignment).where(
                 SubjectAssignment.subject_id == assessment.subject_id,
@@ -265,12 +266,12 @@ async def delete_assessment(
             detail="Assessment not found"
         )
 
-    # Check if lecturer has permission for this specific subject
+    # Check if lecturer/instructor has permission for this specific subject
     from app.models.role import Role
     result = await db.execute(select(Role).where(Role.id == current_user.role_id))
     user_role = result.scalars().first()
 
-    if user_role.name == "LECTURER":
+    if user_role.name in ("LECTURER", "INSTRUCTOR"):
         result = await db.execute(
             select(SubjectAssignment).where(
                 SubjectAssignment.subject_id == assessment.subject_id,
@@ -300,10 +301,10 @@ async def get_assessments_by_subject(
     current_user: User = Depends(get_current_user)
 ):
     """
-    Get all assessments for a specific subject.
+    Get assessments for a specific subject.
 
-    Accessible to all authenticated users.
-    Useful for lecturers and students to see all assessments for a subject.
+    - LECTURER / INSTRUCTOR: only assessments they created (by created_by).
+    - All other roles (SUPER_ADMIN, HOD, DEAN, STUDENT): all assessments for the subject.
     """
     # Verify subject exists
     result = await db.execute(select(Subject).where(Subject.id == subject_id))
@@ -313,13 +314,24 @@ async def get_assessments_by_subject(
             detail="Subject not found"
         )
 
-    result = await db.execute(
-        select(Assessment).options(
-            selectinload(Assessment.subject).selectinload(Subject.department)
-        ).where(
-            Assessment.subject_id == subject_id
-        ).order_by(Assessment.assessment_date)
+    from app.models.role import Role as RoleModel
+    role_result = await db.execute(select(RoleModel).where(RoleModel.id == current_user.role_id))
+    user_role = role_result.scalars().first()
+    role_name = user_role.name if user_role else ""
+
+    stmt = (
+        select(Assessment)
+        .options(selectinload(Assessment.subject).selectinload(Subject.department))
+        .where(Assessment.subject_id == subject_id)
     )
+
+    # Lecturers and Instructors see only assessments they created
+    if role_name in ("LECTURER", "INSTRUCTOR"):
+        stmt = stmt.where(Assessment.created_by == current_user.id)
+
+    stmt = stmt.order_by(Assessment.assessment_date)
+
+    result = await db.execute(stmt)
     assessments = result.scalars().unique().all()
 
     results = []

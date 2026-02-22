@@ -18,6 +18,7 @@ class Assessment(Base):
         index=True
     )
     subject_id = Column(Integer, ForeignKey("subjects.id", ondelete="CASCADE"), nullable=False, index=True)
+    created_by = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
     max_marks = Column(Numeric(5, 2), nullable=False)
     weightage = Column(Numeric(5, 2), nullable=True)  # Percentage contribution
     assessment_date = Column(Date, nullable=True, index=True)
@@ -42,6 +43,7 @@ class Assessment(Base):
 
     # Relationships
     subject = relationship("Subject", back_populates="assessments")
+    creator = relationship("User", foreign_keys=[created_by])
     marks = relationship("Mark", back_populates="assessment", cascade="all, delete-orphan")
 
     def __repr__(self):

@@ -62,15 +62,19 @@ interface UserData {
 
 const roleMap: Record<string, UserRole> = {
   'SUPER_ADMIN': 'super_admin',
+  'DEAN': 'dean',
   'HOD': 'hod',
   'LECTURER': 'lecturer',
+  'INSTRUCTOR': 'instructor',
   'STUDENT': 'student',
 };
 
 const reverseRoleMap: Record<UserRole, string> = {
   'super_admin': 'SUPER_ADMIN',
+  'dean': 'DEAN',
   'hod': 'HOD',
   'lecturer': 'LECTURER',
+  'instructor': 'INSTRUCTOR',
   'student': 'STUDENT',
 };
 
@@ -80,12 +84,16 @@ const roleIdMap: Record<string, number> = {
   'HOD': 2,
   'LECTURER': 3,
   'STUDENT': 4,
+  'DEAN': 5,
+  'INSTRUCTOR': 6,
 };
 
 const roleLabels: Record<string, string> = {
   'SUPER_ADMIN': 'Super Admin',
+  'DEAN': 'Dean',
   'HOD': 'Head of Department',
   'LECTURER': 'Lecturer',
+  'INSTRUCTOR': 'Instructor',
   'STUDENT': 'Student',
 };
 
@@ -365,6 +373,24 @@ export function UsersPage() {
     }
   };
 
+  const handleToggleActive = async (user: UserData) => {
+    const newStatus = user.status === 'active' ? false : true;
+    try {
+      await api.updateUser(parseInt(user.id), { is_active: newStatus });
+      toast({
+        title: newStatus ? "User Activated" : "User Deactivated",
+        description: `${user.name} has been ${newStatus ? "activated" : "deactivated"}.`,
+      });
+      fetchUsers(true);
+    } catch (error: unknown) {
+      toast({
+        title: "Error",
+        description: getApiErrorMessage(error, "Failed to update user status."),
+        variant: "destructive",
+      });
+    }
+  };
+
   const resetForm = () => {
     setFormData({
       first_name: "",
@@ -542,6 +568,16 @@ export function UsersPage() {
               <Edit className="mr-2 h-4 w-4" />
               Edit User
             </DropdownMenuItem>
+            <DropdownMenuItem
+              className="cursor-pointer"
+              onClick={() => handleToggleActive(row)}
+            >
+              {row.status === 'active' ? (
+                <><UserX className="mr-2 h-4 w-4" />Deactivate</>
+              ) : (
+                <><UserCheck className="mr-2 h-4 w-4" />Activate</>
+              )}
+            </DropdownMenuItem>
             <DropdownMenuSeparator />
             <DropdownMenuItem
               className="cursor-pointer text-destructive focus:text-destructive"
@@ -663,8 +699,10 @@ export function UsersPage() {
           <SelectContent className="bg-popover">
             <SelectItem value="all">All Roles</SelectItem>
             <SelectItem value="SUPER_ADMIN">Super Admin</SelectItem>
+            <SelectItem value="DEAN">Dean</SelectItem>
             <SelectItem value="HOD">HOD</SelectItem>
             <SelectItem value="LECTURER">Lecturer</SelectItem>
+            <SelectItem value="INSTRUCTOR">Instructor</SelectItem>
             <SelectItem value="STUDENT">Student</SelectItem>
           </SelectContent>
         </Select>
@@ -771,8 +809,10 @@ export function UsersPage() {
                   </SelectTrigger>
                   <SelectContent className="bg-popover">
                     <SelectItem value="SUPER_ADMIN">Super Admin</SelectItem>
+                    <SelectItem value="DEAN">Dean</SelectItem>
                     <SelectItem value="HOD">Head of Department</SelectItem>
                     <SelectItem value="LECTURER">Lecturer</SelectItem>
+                    <SelectItem value="INSTRUCTOR">Instructor</SelectItem>
                     <SelectItem value="STUDENT">Student</SelectItem>
                   </SelectContent>
                 </Select>
@@ -892,8 +932,10 @@ export function UsersPage() {
                   </SelectTrigger>
                   <SelectContent className="bg-popover">
                     <SelectItem value="SUPER_ADMIN">Super Admin</SelectItem>
+                    <SelectItem value="DEAN">Dean</SelectItem>
                     <SelectItem value="HOD">Head of Department</SelectItem>
                     <SelectItem value="LECTURER">Lecturer</SelectItem>
+                    <SelectItem value="INSTRUCTOR">Instructor</SelectItem>
                     <SelectItem value="STUDENT">Student</SelectItem>
                   </SelectContent>
                 </Select>

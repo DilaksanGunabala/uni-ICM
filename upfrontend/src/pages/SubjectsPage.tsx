@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { useSearchParams } from "react-router-dom";
+import { useAuth } from "@/contexts/AuthContext";
 import { PageHeader } from "@/components/ui/page-header";
 import { DataTable, Column } from "@/components/ui/data-table";
 import { Button } from "@/components/ui/button";
@@ -15,7 +16,6 @@ import {
   Filter,
   BookOpen,
   ArrowLeft,
-  ChevronRight,
 } from "lucide-react";
 import {
   DropdownMenu,
@@ -48,7 +48,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
-import api, { BackendSubject, BackendDepartment, getApiErrorMessage } from "@/lib/api";
+import api, { BackendSubject, BackendDepartment, BackendUser, getApiErrorMessage } from "@/lib/api";
 
 interface SubjectData {
   id: string;
@@ -60,7 +60,10 @@ interface SubjectData {
   semester: number | null;
   credits: number;
   isActive: boolean;
+  coordinatorId: number | null;
   coordinatorName: string | null;
+  lecturerId: number | null;
+  lecturerName: string | null;
 }
 
 // Semester options with type grouping
@@ -77,7 +80,12 @@ const semesterOptions = [
 
 export function SubjectsPage() {
   const { toast } = useToast();
+  const { user } = useAuth();
   const [searchParams, setSearchParams] = useSearchParams();
+
+  // Role-based capability flags
+  const isAdmin = user?.role === 'super_admin';
+  const canAssign = user?.role === 'super_admin' || user?.role === 'hod';
 
   // Selection state
   const [selectedSemester, setSelectedSemester] = useState<number | string | null>(null);
@@ -107,15 +115,22 @@ export function SubjectsPage() {
     department_id: "",
     semester: "1",
     credits: "3",
+    coordinator_id: "none",
+    lecturer_id: "none",
   });
+
+  // Staff users for coordinator/lecturer dropdowns
+  const [staffUsers, setStaffUsers] = useState<BackendUser[]>([]);
+  const [lecturerUsers, setLecturerUsers] = useState<BackendUser[]>([]);
 
   // Stats for semester cards
   const [semesterCounts, setSemesterCounts] = useState<Record<string, number>>({});
 
-  // Fetch departments on mount
+  // Fetch departments and staff users on mount
   useEffect(() => {
     fetchDepartments();
     fetchAllSubjectsForCounts();
+    if (canAssign) fetchStaffUsers();
   }, []);
 
   // Fetch subjects when semester is selected
@@ -133,6 +148,19 @@ export function SubjectsPage() {
       console.error('Failed to fetch departments:', error);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const fetchStaffUsers = async () => {
+    try {
+      const response = await api.getUsers({ page_size: 100, is_active: true });
+      // Filter by role_name (DB-agnostic, always reliable)
+      const coordinatorRoleNames = ["HOD", "LECTURER", "DEAN", "INSTRUCTOR"];
+      const lecturerRoleNames = ["LECTURER", "INSTRUCTOR"];
+      setStaffUsers(response.items.filter((u: BackendUser) => coordinatorRoleNames.includes(u.role_name || "")));
+      setLecturerUsers(response.items.filter((u: BackendUser) => lecturerRoleNames.includes(u.role_name || "")));
+    } catch (error) {
+      console.error('Failed to fetch staff users:', error);
     }
   };
 
@@ -183,7 +211,10 @@ export function SubjectsPage() {
         semester: s.semester,
         credits: s.credits,
         isActive: s.is_active,
+        coordinatorId: s.coordinator_id ?? null,
         coordinatorName: s.coordinator_name || null,
+        lecturerId: s.lecturer_id ?? null,
+        lecturerName: s.lecturer_name || null,
       }));
 
       setSubjects(mappedSubjects);
@@ -235,15 +266,33 @@ export function SubjectsPage() {
     try {
       setSaving(true);
 
-      await api.createSubject({
+      const newSubject = await api.createSubject({
         code: formData.code,
         name: formData.name,
         semester_type: formData.semester_type,
         department_id: formData.semester_type === "SPECIAL" ? parseInt(formData.department_id) : undefined,
         semester: formData.semester_type !== "GES" ? parseInt(formData.semester) : undefined,
         credits: parseInt(formData.credits),
+        coordinator_id: (formData.coordinator_id && formData.coordinator_id !== "none") ? parseInt(formData.coordinator_id) : undefined,
         is_active: true,
       } as Partial<BackendSubject>);
+
+      // Assign lecturer if selected
+      if (formData.lecturer_id && formData.lecturer_id !== "none") {
+        try {
+          await api.assignLecturer(newSubject.id, {
+            lecturer_id: parseInt(formData.lecturer_id),
+            academic_year: "2025/2026",
+          });
+        } catch {
+          // lecturer assignment failure is non-fatal
+          toast({
+            title: "Warning",
+            description: "Subject created but lecturer assignment failed. You can assign a lecturer via Edit.",
+            variant: "destructive",
+          });
+        }
+      }
 
       toast({
         title: "Subject Created",
@@ -270,19 +319,54 @@ export function SubjectsPage() {
 
     try {
       setSaving(true);
+      const subjectId = parseInt(selectedSubject.id);
+      const newCoordId = (formData.coordinator_id && formData.coordinator_id !== "none")
+        ? parseInt(formData.coordinator_id) : null;
+      const newLecturerId = (formData.lecturer_id && formData.lecturer_id !== "none")
+        ? parseInt(formData.lecturer_id) : null;
+      const oldLecturerId = selectedSubject.lecturerId;
 
-      await api.updateSubject(parseInt(selectedSubject.id), {
-        code: formData.code,
-        name: formData.name,
-        semester_type: formData.semester_type,
-        department_id: formData.semester_type === "SPECIAL" ? parseInt(formData.department_id) : null,
-        semester: formData.semester_type !== "GES" ? parseInt(formData.semester) : null,
-        credits: parseInt(formData.credits),
-      } as Partial<BackendSubject>);
+      if (isAdmin) {
+        // Super Admin: full subject update including coordinator
+        await api.updateSubject(subjectId, {
+          code: formData.code,
+          name: formData.name,
+          semester_type: formData.semester_type,
+          department_id: formData.semester_type === "SPECIAL" ? parseInt(formData.department_id) : null,
+          semester: formData.semester_type !== "GES" ? parseInt(formData.semester) : null,
+          credits: parseInt(formData.credits),
+          coordinator_id: newCoordId,
+        } as Partial<BackendSubject>);
+      } else if (canAssign) {
+        // HOD: only coordinator_id update (backend enforces dept scope)
+        await api.updateSubject(subjectId, {
+          coordinator_id: newCoordId,
+        } as Partial<BackendSubject>);
+      }
+
+      // Handle lecturer assignment change (both admin and HOD)
+      if (canAssign && newLecturerId !== oldLecturerId) {
+        if (oldLecturerId) {
+          try {
+            const assignments = await api.getSubjectLecturers(subjectId);
+            for (const a of assignments) {
+              await api.removeSubjectLecturer(subjectId, a.id);
+            }
+          } catch {
+            // ignore removal errors
+          }
+        }
+        if (newLecturerId) {
+          await api.assignLecturer(subjectId, {
+            lecturer_id: newLecturerId,
+            academic_year: "2025/2026",
+          });
+        }
+      }
 
       toast({
         title: "Subject Updated",
-        description: `${formData.code} - ${formData.name} has been updated successfully.`,
+        description: `${selectedSubject.code} - ${selectedSubject.name} has been updated successfully.`,
       });
 
       setIsEditDialogOpen(false);
@@ -352,6 +436,8 @@ export function SubjectsPage() {
       department_id: "",
       semester: defaultSemester,
       credits: "3",
+      coordinator_id: "none",
+      lecturer_id: "none",
     });
     setSelectedSubject(null);
   };
@@ -370,6 +456,8 @@ export function SubjectsPage() {
       department_id: subject.departmentId ? subject.departmentId.toString() : "",
       semester: subject.semester ? subject.semester.toString() : "1",
       credits: subject.credits.toString(),
+      coordinator_id: subject.coordinatorId ? subject.coordinatorId.toString() : "none",
+      lecturer_id: subject.lecturerId ? subject.lecturerId.toString() : "none",
     });
     setIsEditDialogOpen(true);
   };
@@ -432,6 +520,15 @@ export function SubjectsPage() {
       ),
     },
     {
+      key: "lecturerName",
+      header: "Lecturer",
+      cell: (row) => (
+        <span className="text-sm text-muted-foreground">
+          {row.lecturerName || "Not assigned"}
+        </span>
+      ),
+    },
+    {
       key: "status",
       header: "Status",
       cell: (row) => (
@@ -449,10 +546,10 @@ export function SubjectsPage() {
         </span>
       ),
     },
-    {
+    ...(canAssign ? [{
       key: "actions",
       header: "Actions",
-      cell: (row) => (
+      cell: (row: SubjectData) => (
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button variant="ghost" size="icon" className="h-8 w-8">
@@ -462,21 +559,25 @@ export function SubjectsPage() {
           <DropdownMenuContent align="end" className="bg-popover border shadow-lg">
             <DropdownMenuItem className="cursor-pointer" onClick={() => openEditDialog(row)}>
               <Edit className="mr-2 h-4 w-4" />
-              Edit Subject
+              {isAdmin ? "Edit Subject" : "Assign Staff"}
             </DropdownMenuItem>
-            <DropdownMenuSeparator />
-            <DropdownMenuItem
-              className="cursor-pointer text-destructive focus:text-destructive"
-              onClick={() => openDeleteDialog(row)}
-            >
-              <Trash2 className="mr-2 h-4 w-4" />
-              Delete Subject
-            </DropdownMenuItem>
+            {isAdmin && (
+              <>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem
+                  className="cursor-pointer text-destructive focus:text-destructive"
+                  onClick={() => openDeleteDialog(row)}
+                >
+                  <Trash2 className="mr-2 h-4 w-4" />
+                  Delete Subject
+                </DropdownMenuItem>
+              </>
+            )}
           </DropdownMenuContent>
         </DropdownMenu>
       ),
       className: "w-[80px]",
-    },
+    }] : []),
   ];
 
   if (loading) {
@@ -511,10 +612,12 @@ export function SubjectsPage() {
               >
                 <RefreshCw className={`h-4 w-4 ${refreshing ? 'animate-spin' : ''}`} />
               </Button>
-              <Button onClick={openCreateDialog}>
-                <Plus className="mr-2 h-4 w-4" />
-                Add Subject
-              </Button>
+              {isAdmin && (
+                <Button onClick={openCreateDialog}>
+                  <Plus className="mr-2 h-4 w-4" />
+                  Add Subject
+                </Button>
+              )}
             </div>
           ) : undefined
         }
@@ -704,7 +807,7 @@ export function SubjectsPage() {
 
       {/* Create Subject Dialog */}
       <Dialog open={isCreateDialogOpen} onOpenChange={setIsCreateDialogOpen}>
-        <DialogContent className="sm:max-w-lg">
+        <DialogContent className="sm:max-w-lg max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Add New Subject</DialogTitle>
             <DialogDescription>
@@ -806,6 +909,42 @@ export function SubjectsPage() {
                 </div>
               )}
             </div>
+            {canAssign && (
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label htmlFor="coordinator">Coordinator</Label>
+                  <Select value={formData.coordinator_id} onValueChange={(value) => setFormData({ ...formData, coordinator_id: value })}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="None" />
+                    </SelectTrigger>
+                    <SelectContent className="bg-popover">
+                      <SelectItem value="none">None</SelectItem>
+                      {staffUsers.map((u) => (
+                        <SelectItem key={u.id} value={u.id.toString()}>
+                          {u.first_name} {u.last_name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="lecturer">Lecturer</Label>
+                  <Select value={formData.lecturer_id} onValueChange={(value) => setFormData({ ...formData, lecturer_id: value })}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="None" />
+                    </SelectTrigger>
+                    <SelectContent className="bg-popover">
+                      <SelectItem value="none">None</SelectItem>
+                      {lecturerUsers.map((u) => (
+                        <SelectItem key={u.id} value={u.id.toString()}>
+                          {u.first_name} {u.last_name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+            )}
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => { setIsCreateDialogOpen(false); resetForm(); }} disabled={saving}>
@@ -824,106 +963,162 @@ export function SubjectsPage() {
 
       {/* Edit Subject Dialog */}
       <Dialog open={isEditDialogOpen} onOpenChange={setIsEditDialogOpen}>
-        <DialogContent className="sm:max-w-lg">
+        <DialogContent className="sm:max-w-lg max-h-[90vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle>Edit Subject</DialogTitle>
+            <DialogTitle>{isAdmin ? "Edit Subject" : "Assign Staff"}</DialogTitle>
             <DialogDescription>
-              Update subject information.
+              {isAdmin
+                ? "Update subject information."
+                : "Assign a coordinator and lecturer to this subject."}
             </DialogDescription>
           </DialogHeader>
           <div className="grid gap-4 py-4">
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label htmlFor="edit_code">Subject Code</Label>
-                <Input
-                  id="edit_code"
-                  value={formData.code}
-                  onChange={(e) => setFormData({ ...formData, code: e.target.value })}
-                />
+            {/* HOD: read-only subject context */}
+            {!isAdmin && selectedSubject && (
+              <div className="rounded-lg border bg-muted/40 px-4 py-3 space-y-1">
+                <p className="text-xs text-muted-foreground font-medium uppercase tracking-wider">Subject</p>
+                <p className="font-semibold">{selectedSubject.code} — {selectedSubject.name}</p>
+                {selectedSubject.departmentName && selectedSubject.departmentName !== "N/A" && (
+                  <p className="text-sm text-muted-foreground">{selectedSubject.departmentName}</p>
+                )}
               </div>
-              <div className="space-y-2">
-                <Label htmlFor="edit_credits">Credits</Label>
-                <Select value={formData.credits} onValueChange={(value) => setFormData({ ...formData, credits: value })}>
-                  <SelectTrigger>
-                    <SelectValue placeholder="Select credits" />
-                  </SelectTrigger>
-                  <SelectContent className="bg-popover">
-                    {[1, 2, 3, 4, 5, 6].map((c) => (
-                      <SelectItem key={c} value={c.toString()}>
-                        {c} Credit{c !== 1 ? 's' : ''}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="edit_name">Subject Name</Label>
-              <Input
-                id="edit_name"
-                value={formData.name}
-                onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="edit_semester_type">Subject Type</Label>
-              <Select
-                value={formData.semester_type}
-                onValueChange={(value) => {
-                  const updates: Record<string, string> = { semester_type: value };
-                  if (value === "GENERAL") updates.semester = "1";
-                  else if (value === "SPECIAL") updates.semester = "4";
-                  else if (value === "GES") { updates.semester = ""; updates.department_id = ""; }
-                  if (value !== "SPECIAL") updates.department_id = "";
-                  setFormData({ ...formData, ...updates });
-                }}
-              >
-                <SelectTrigger>
-                  <SelectValue placeholder="Select type" />
-                </SelectTrigger>
-                <SelectContent className="bg-popover">
-                  <SelectItem value="GENERAL">General (Sem 1-3)</SelectItem>
-                  <SelectItem value="SPECIAL">Special (Sem 4-8, Dept Required)</SelectItem>
-                  <SelectItem value="GES">GES (General Elective)</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="grid grid-cols-2 gap-4">
-              {formData.semester_type === "SPECIAL" && (
+            )}
+
+            {/* Admin-only fields */}
+            {isAdmin && (
+              <>
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="edit_code">Subject Code</Label>
+                    <Input
+                      id="edit_code"
+                      value={formData.code}
+                      onChange={(e) => setFormData({ ...formData, code: e.target.value })}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="edit_credits">Credits</Label>
+                    <Select value={formData.credits} onValueChange={(value) => setFormData({ ...formData, credits: value })}>
+                      <SelectTrigger>
+                        <SelectValue placeholder="Select credits" />
+                      </SelectTrigger>
+                      <SelectContent className="bg-popover">
+                        {[1, 2, 3, 4, 5, 6].map((c) => (
+                          <SelectItem key={c} value={c.toString()}>
+                            {c} Credit{c !== 1 ? 's' : ''}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
                 <div className="space-y-2">
-                  <Label htmlFor="edit_department">Department</Label>
-                  <Select value={formData.department_id} onValueChange={(value) => setFormData({ ...formData, department_id: value })}>
+                  <Label htmlFor="edit_name">Subject Name</Label>
+                  <Input
+                    id="edit_name"
+                    value={formData.name}
+                    onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="edit_semester_type">Subject Type</Label>
+                  <Select
+                    value={formData.semester_type}
+                    onValueChange={(value) => {
+                      const updates: Record<string, string> = { semester_type: value };
+                      if (value === "GENERAL") updates.semester = "1";
+                      else if (value === "SPECIAL") updates.semester = "4";
+                      else if (value === "GES") { updates.semester = ""; updates.department_id = ""; }
+                      if (value !== "SPECIAL") updates.department_id = "";
+                      setFormData({ ...formData, ...updates });
+                    }}
+                  >
                     <SelectTrigger>
-                      <SelectValue placeholder="Select department" />
+                      <SelectValue placeholder="Select type" />
                     </SelectTrigger>
                     <SelectContent className="bg-popover">
-                      {departments.map((dept) => (
-                        <SelectItem key={dept.id} value={dept.id.toString()}>
-                          {dept.name}
+                      <SelectItem value="GENERAL">General (Sem 1-3)</SelectItem>
+                      <SelectItem value="SPECIAL">Special (Sem 4-8, Dept Required)</SelectItem>
+                      <SelectItem value="GES">GES (General Elective)</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                  {formData.semester_type === "SPECIAL" && (
+                    <div className="space-y-2">
+                      <Label htmlFor="edit_department">Department</Label>
+                      <Select value={formData.department_id} onValueChange={(value) => setFormData({ ...formData, department_id: value })}>
+                        <SelectTrigger>
+                          <SelectValue placeholder="Select department" />
+                        </SelectTrigger>
+                        <SelectContent className="bg-popover">
+                          {departments.map((dept) => (
+                            <SelectItem key={dept.id} value={dept.id.toString()}>
+                              {dept.name}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  )}
+                  {formData.semester_type !== "GES" && (
+                    <div className="space-y-2">
+                      <Label htmlFor="edit_semester">Semester</Label>
+                      <Select value={formData.semester} onValueChange={(value) => setFormData({ ...formData, semester: value })}>
+                        <SelectTrigger>
+                          <SelectValue placeholder="Select semester" />
+                        </SelectTrigger>
+                        <SelectContent className="bg-popover">
+                          {(formData.semester_type === "GENERAL" ? [1, 2, 3] : [4, 5, 6, 7, 8]).map((sem) => (
+                            <SelectItem key={sem} value={sem.toString()}>
+                              Semester {sem}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  )}
+                </div>
+              </>
+            )}
+
+            {/* Coordinator and Lecturer — visible to Admin and HOD */}
+            {canAssign && (
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label htmlFor="edit_coordinator">Coordinator</Label>
+                  <Select value={formData.coordinator_id} onValueChange={(value) => setFormData({ ...formData, coordinator_id: value })}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="None" />
+                    </SelectTrigger>
+                    <SelectContent className="bg-popover">
+                      <SelectItem value="none">None</SelectItem>
+                      {staffUsers.map((u) => (
+                        <SelectItem key={u.id} value={u.id.toString()}>
+                          {u.first_name} {u.last_name}
                         </SelectItem>
                       ))}
                     </SelectContent>
                   </Select>
                 </div>
-              )}
-              {formData.semester_type !== "GES" && (
                 <div className="space-y-2">
-                  <Label htmlFor="edit_semester">Semester</Label>
-                  <Select value={formData.semester} onValueChange={(value) => setFormData({ ...formData, semester: value })}>
+                  <Label htmlFor="edit_lecturer">Lecturer</Label>
+                  <Select value={formData.lecturer_id} onValueChange={(value) => setFormData({ ...formData, lecturer_id: value })}>
                     <SelectTrigger>
-                      <SelectValue placeholder="Select semester" />
+                      <SelectValue placeholder="None" />
                     </SelectTrigger>
                     <SelectContent className="bg-popover">
-                      {(formData.semester_type === "GENERAL" ? [1, 2, 3] : [4, 5, 6, 7, 8]).map((sem) => (
-                        <SelectItem key={sem} value={sem.toString()}>
-                          Semester {sem}
+                      <SelectItem value="none">None</SelectItem>
+                      {lecturerUsers.map((u) => (
+                        <SelectItem key={u.id} value={u.id.toString()}>
+                          {u.first_name} {u.last_name}
                         </SelectItem>
                       ))}
                     </SelectContent>
                   </Select>
                 </div>
-              )}
-            </div>
+              </div>
+            )}
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => { setIsEditDialogOpen(false); resetForm(); }} disabled={saving}>

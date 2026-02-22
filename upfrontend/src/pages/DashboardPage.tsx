@@ -12,9 +12,13 @@ export function DashboardPage() {
   switch (user.role) {
     case "super_admin":
       return <SuperAdminDashboard />;
+    case "dean":
+      return <HODDashboard />;
     case "hod":
       return <HODDashboard />;
     case "lecturer":
+      return <LecturerDashboard />;
+    case "instructor":
       return <LecturerDashboard />;
     case "student":
       return <StudentDashboard />;

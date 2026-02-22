@@ -5,6 +5,7 @@ import { Link } from "react-router-dom";
 interface BreadcrumbItem {
   label: string;
   href?: string;
+  onClick?: () => void;
 }
 
 interface PageHeaderProps {
@@ -42,6 +43,13 @@ export function PageHeader({
                 >
                   {item.label}
                 </Link>
+              ) : item.onClick ? (
+                <button
+                  onClick={item.onClick}
+                  className="hover:text-foreground transition-colors cursor-pointer"
+                >
+                  {item.label}
+                </button>
               ) : (
                 <span className="text-foreground font-medium">{item.label}</span>
               )}
